@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% load custom_filters %}
+{% load humanize %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold text-primary mb-6">Dashboard</h2>
+
+<!-- First Row: Order Stats -->
+<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mb-8">
+    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+        <p class="text-gray-500 text-sm">Bugungi buyurtmalar</p>
+        <h3 class="text-3xl font-bold text-primary mt-2">{{ stats.today_orders }}</h3>
+    </div>
+
+    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+        <p class="text-gray-500 text-sm">Qisman yetkazilgan</p>
+        <h3 class="text-3xl font-bold text-primary-dark mt-2">{{ stats.partial }}</h3>
+    </div>
+
+    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+        <p class="text-gray-500 text-sm">Yetkazilgan</p>
+        <h3 class="text-3xl font-bold text-green-500 mt-2">{{ stats.delivered }}</h3>
+    </div>
+</div>
+
+<!-- Second Row: Money Stats -->
+<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mb-8">
+    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+        <p class="text-gray-500 text-sm">Bugungi tushum</p>
+        <h3 class="text-3xl font-bold text-green-600 mt-2 break-words">
+            {{ received_money|floatformat:0|intcomma }} so'm
+        </h3>
+    </div>
+
+    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+        <p class="text-gray-500 text-sm">Do‘kon qarzlari</p>
+        <h3 class="text-3xl font-bold text-red-600 mt-2 break-words">
+            {{ total_loan|default:0|floatformat:0|intcomma }} so'm
+        </h3>
+    </div>
+
+    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+        <p class="text-gray-500 text-sm">Kassa</p>
+        <h3 class="text-3xl font-bold text-primary-dark mt-2 break-words">
+            {{ bakery_balance|default:0|floatformat:0|intcomma }} so'm
+        </h3>
+    </div>
+</div>
+{% endblock %}

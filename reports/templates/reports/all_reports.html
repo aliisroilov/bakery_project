@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mx-auto px-4 mt-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-primary">📑 Все отчёты</h1>
+
+        <!-- Add Purchase Button -->
+        <a href="{% url 'reports:purchase_create' %}" 
+           class="bg-primary hover:bg-secondary text-white px-5 py-2 rounded-lg shadow transition flex items-center gap-2">
+            ➕ Расход
+        </a>
+    </div>
+
+    <!-- Filter form -->
+    <form method="get" class="mb-6 flex flex-wrap items-end gap-4">
+        <div>
+            <label class="block text-sm font-medium mb-1">Boshlanish sanasi</label>
+            <input type="date" name="start_date" value="{{ request.GET.start_date }}" 
+                   class="border rounded-lg px-3 py-2 w-48 focus:ring-2 focus:ring-primary">
+        </div>
+        <div>
+            <label class="block text-sm font-medium mb-1">Tugash sanasi</label>
+            <input type="date" name="end_date" value="{{ request.GET.end_date }}" 
+                   class="border rounded-lg px-3 py-2 w-48 focus:ring-2 focus:ring-primary">
+        </div>
+        <div>
+            <button type="submit" 
+                    class="bg-primary hover:bg-secondary text-white px-6 py-2 rounded-lg shadow transition">
+                Filtrlash
+            </button>
+        </div>
+    </form>
+
+    <!-- Scrollable table -->
+    <div class="overflow-x-auto bg-white shadow-lg rounded-lg border">
+        <table class="w-full border-collapse text-sm md:text-base min-w-max">
+            <thead class="bg-secondary text-gray-800 sticky top-0 z-10">
+                <tr>
+                    <th class="px-4 py-3 border text-center">📅</th>
+                    <th class="px-4 py-3 border text-center">📂</th>
+                    <th class="px-4 py-3 border text-center">📝</th>
+                    <th class="px-4 py-3 border text-center">🏢</th>
+                    <th class="px-4 py-3 border text-center text-green-700">+</th>
+                    <th class="px-4 py-3 border text-center text-red-700">-</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for r in reports %}
+                <tr class="hover:bg-primary/10 even:bg-gray-50 transition">
+                    <td class="px-4 py-2 border text-center whitespace-nowrap">{{ r.date|date:"d.m.Y" }}</td>
+                    <td class="px-4 py-2 border text-center">{{ r.category }}</td>
+                    <td class="px-4 py-2 border text-center">{{ r.description }}</td>
+                    <td class="px-4 py-2 border text-center">{{ r.counterparty }}</td>
+                    <td class="px-4 py-2 border text-center text-green-600 font-semibold">
+                        {% if r.income %}{{ r.income|floatformat:0 }}{% else %}-{% endif %}
+                    </td>
+                    <td class="px-4 py-2 border text-center text-red-600 font-semibold">
+                        {% if r.expense %}{{ r.expense|floatformat:0 }}{% else %}-{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="text-center py-6 text-gray-500">
+                        📭 Ma’lumotlar mavjud emas
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

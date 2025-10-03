@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Bakery Management{% endblock %}</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Alpine.js for interactivity -->
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.12.0/dist/cdn.min.js" defer></script>
+
+    <!-- Custom Colors -->
+    <style>
+        /* Primary colors */
+        .bg-primary { background-color: #bea087; }
+        .bg-primary-dark { background-color: #dcc38b; }
+        .text-primary { color: #bea087; }
+        .text-primary-dark { color: #dcc38b; }
+        .hover-bg-primary-dark:hover { background-color: #dcc38b; }
+    </style>
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="bg-gray-100 font-sans text-gray-800">
+
+    <!-- Navbar -->
+    <nav class="bg-white shadow-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16 items-center">
+                <!-- Left -->
+                <div class="flex items-center space-x-4">
+                    <a href="{% url 'dashboard' %}" class="text-primary text-xl font-bold">Bakery</a>
+                    <div class="hidden md:flex space-x-4">
+                        <!-- Dashboard is visible to everyone -->
+                        {% if request.user.role == 'viewer' %}
+                            <a href="{% url 'viewer_dashboard' %}" class="text-gray-700 hover-text-primary-dark">Dashboard</a>
+                        {% else %}
+                            <a href="{% url 'dashboard' %}" class="text-gray-700 hover-text-primary-dark">Dashboard</a>
+                        {% endif %}
+                    
+                        <!-- Regions: only for managers, superusers, drivers -->
+                        {% if request.user.role == 'manager' or request.user.is_superuser or request.user.role == 'driver' %}
+                            <a href="{% url 'districts' %}" class="text-gray-700 hover-text-primary-dark">Регионы</a>
+                        {% endif %}
+                    </div>
+                </div>
+            
+                <!-- Right -->
+                <div class="flex items-center space-x-4">
+                    <span class="hidden md:block text-gray-600">{{ request.user.username }}</span>
+                    <a href="{% url 'logout' %}" class="bg-primary hover-bg-primary-dark text-white px-4 py-2 rounded-lg transition">Chiqish</a>
+                
+                    <!-- Mobile menu button -->
+                    <button id="menu-toggle" class="lg:hidden bg-primary text-white px-3 py-2 rounded focus:outline-none hover-bg-primary-dark">
+                        ☰
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main container -->
+    <div class="max-w-7xl mx-auto mt-6 px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row gap-6 items-start">
+    
+        <!-- Sidebar -->
+        <aside id="sidebar"
+               class="hidden lg:flex flex-col flex-shrink-0 w-full lg:w-64 bg-white shadow-lg rounded-lg p-4 space-y-2">
+            <h2 class="text-lg font-bold text-primary mb-4">Menyu</h2>
+
+            <!-- Dashboard (visible to all) -->
+            {% if request.user.role == 'viewer' %}
+                <a href="{% url 'viewer_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Dashboard</a>
+            {% else %}
+                <a href="{% url 'dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Dashboard</a>
+            {% endif %}
+
+            {% if request.user.role == 'manager' or request.user.is_superuser %}
+                <a href="{% url 'districts' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Регионы</a>
+                <a href="{% url 'loan_repayment' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Приход</a>
+                <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Отчёты</a>
+                <a href="{% url 'admin:index' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Admin Panel</a>
+            {% elif request.user.role == 'driver' %}
+                <a href="{% url 'districts' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Регионы</a>
+            {% elif request.user.role == 'viewer' %}
+                <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Отчёты</a>
+            {% endif %}
+        </aside>
+
+        <!-- Content area -->
+        <main class="flex-1 flex flex-col">
+            {% if messages %}
+                <div class="mb-4">
+                    {% for message in messages %}
+                        <div class="p-4 rounded-lg mb-2 
+                            {% if message.tags == 'success' %}bg-green-100 text-green-700
+                            {% elif message.tags == 'error' %}bg-red-100 text-red-700
+                            {% else %}bg-gray-100 text-gray-700{% endif %}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+            
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <!-- Sidebar toggle script -->
+    <script>
+        const toggleBtn = document.getElementById("menu-toggle");
+        const sidebar = document.getElementById("sidebar");
+
+        toggleBtn.addEventListener("click", () => {
+            sidebar.classList.toggle("hidden");
+        });
+    </script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

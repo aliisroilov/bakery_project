@@ -1,0 +1,1 @@
+web: gunicorn bakery_project.wsgi

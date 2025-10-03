@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block content %}
+<div class="max-w-lg mx-auto bg-white shadow-lg rounded-lg p-6 mt-10">
+    <h2 class="text-2xl font-bold text-gray-800 mb-4">Qarzdan To‘lash</h2>
+
+    <form method="POST" class="space-y-4">
+        {% csrf_token %}
+        
+        <div>
+            <label class="block text-gray-600 mb-1">Do‘kon</label>
+            {{ form.shop }}
+        </div>
+
+        <div>
+            <label class="block text-gray-600 mb-1">To‘lov summasi (so'm)</label>
+            {{ form.amount }}
+        </div>
+
+        <button type="submit"
+            class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition">
+            Tasdiqlash
+        </button>
+    </form>
+
+    <hr class="my-6">
+
+    <h3 class="text-xl font-semibold mb-2">Do‘konlarning joriy qarzlari</h3>
+    <ul class="space-y-2">
+        {% for shop in shops %}
+            <li class="flex justify-between border-b pb-1">
+                <span>{{ shop.name }}</span>
+                <span class="font-bold text-red-600">{{ shop.loan_balance|floatformat:0|intcomma }} so'm</span>
+            </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}

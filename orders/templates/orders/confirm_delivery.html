@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block title %}Buyurtmani Tasdiqlash{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold text-primary mb-6">Buyurtmani Tasdiqlash</h2>
+
+<div class="bg-white shadow-lg rounded-lg p-6">
+    <h3 class="text-xl font-semibold text-gray-800 mb-4">Do‘kon: {{ order.shop.name }}</h3>
+    <p class="text-gray-500 mb-4">Hudud: {{ order.shop.region.name }}</p>
+
+    <form method="POST">
+        {% csrf_token %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-2 text-left text-gray-600 font-medium">Mahsulot</th>
+                        <th class="px-4 py-2 text-center text-gray-600 font-medium">Buyurtma miqdori</th>
+                        <th class="px-4 py-2 text-center text-gray-600 font-medium">Yetkazildi</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for item, field in fields %}
+                    <tr>
+                        <td class="px-4 py-2">{{ item.product.name }}</td>
+                        <td class="px-4 py-2 text-center">{{ item.quantity }}</td>
+                        <td class="px-4 py-2 text-center">
+                            {{ field }}
+                            {% if field.errors %}
+                                <p class="text-red-500 text-sm">{{ field.errors|striptags }}</p>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="mt-6 flex flex-col sm:flex-row items-center gap-4">
+            <label class="flex flex-col sm:flex-row items-center gap-2">
+                <span class="text-gray-700 font-medium">Olingan summa (so'm):</span>
+                {{ form.received_amount }}
+                {% if form.received_amount.errors %}
+                    <p class="text-red-500 text-sm">{{ form.received_amount.errors|striptags }}</p>
+                {% endif %}
+            </label>
+
+            <button type="submit" 
+                class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition duration-300">
+                Tasdiqlash
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

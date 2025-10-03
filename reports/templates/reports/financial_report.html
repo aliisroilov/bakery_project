@@ -1,0 +1,23 @@
+{% extends 'reports/base_report.html' %}
+
+{% block report_table %}
+<table class="table-auto w-full border-collapse border">
+    <thead>
+        <tr class="bg-orange-100">
+            <th class="border px-2 py-1 text-left">Type</th>
+            <th class="border px-2 py-1 text-right">Amount</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td class="border px-2 py-1">Total Sales</td>
+            <td class="border px-2 py-1 text-right">{{ total_sales }}</td>
+        </tr>
+        <tr class="font-bold bg-orange-50">
+            <td class="border px-2 py-1">Net Profit</td>
+            <td class="border px-2 py-1 text-right">{{ net_profit }}</td>
+        </tr>
+    </tbody>
+</table>
+{% endblock %}
+    

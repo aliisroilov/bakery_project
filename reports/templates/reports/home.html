@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2 class="text-3xl font-bold text-primary mb-10 text-center">📊 Отчёты</h2>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-6xl mx-auto">
+
+    {% if request.user.role != 'viewer' %}
+        <!-- Sales Report (not for viewer) -->
+        <a href="{% url 'reports:sales_report' %}" 
+           class="group bg-gradient-to-r from-primary/30 to-primary/10 p-8 rounded-2xl shadow-lg hover:shadow-2xl transition transform hover:-translate-y-1">
+            <div class="flex items-center space-x-4">
+                <div class="p-4 bg-primary text-white rounded-xl shadow-md group-hover:bg-secondary transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M9 17v-6h13M9 11V7h13M5 21h2M5 7h2m-2 4h2m-2 4h2" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-semibold text-gray-800">Отчёт продаж</h1>
+                </div>
+            </div>
+        </a>
+    {% endif %}
+
+    <!-- Financial Report (visible to all, including viewer) -->
+    <a href="{% url 'reports:all_reports' %}" 
+       class="group bg-gradient-to-r from-primary/20 to-primary/10 p-8 rounded-2xl shadow-lg hover:shadow-2xl transition transform hover:-translate-y-1">
+        <div class="flex items-center space-x-4">
+            <div class="p-4 bg-primary text-white rounded-xl shadow-md group-hover:bg-secondary transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M11 11V3h2v8h8v2h-8v8h-2v-8H3v-2h8z" />
+                </svg>
+            </div>
+            <div>
+                <h3 class="text-xl font-semibold text-gray-800">Касса</h3>
+            </div>
+        </div>
+    </a>
+
+    {% if request.user.role != 'viewer' %}
+        <!-- Purchases Report (not for viewer) -->
+        <a href="{% url 'reports:purchase_list' %}" 
+           class="group bg-gradient-to-r from-secondary/30 to-secondary/10 p-8 rounded-2xl shadow-lg hover:shadow-2xl transition transform hover:-translate-y-1">
+            <div class="flex items-center space-x-4">
+                <div class="p-4 bg-primary text-white rounded-xl shadow-md group-hover:bg-primary transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                              d="M3 3h18M9 3v18m6-18v18" />
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-xl font-semibold text-gray-800">Отчёт расходов</h3>
+                </div>
+            </div>
+        </a>
+    {% endif %}
+
+    <!-- Contragents Report (visible to all, including viewer) -->
+    <a href="{% url 'reports:contragents_report' %}" 
+       class="group bg-gradient-to-r from-primary/20 to-primary/10 p-8 rounded-2xl shadow-lg hover:shadow-2xl transition transform hover:-translate-y-1">
+        <div class="flex items-center space-x-4">
+            <div class="p-4 bg-primary text-white rounded-xl shadow-md group-hover:bg-secondary transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                          d="M17 20h5v-2a2 2 0 00-2-2h-3M9 20H4v-2a2 2 0 012-2h3m6-4a4 4 0 110-8 4 4 0 010 8z" />
+                </svg>
+            </div>
+            <div>
+                <h3 class="text-xl font-semibold text-gray-800">Контрагенты</h3>
+            </div>
+        </div>
+    </a>
+
+</div>
+{% endblock %}

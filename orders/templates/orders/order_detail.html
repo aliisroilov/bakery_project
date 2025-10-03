@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block title %}Buyurtma Tafsilotlari{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold text-primary mb-6">Buyurtma #{{ order.id }} Tafsilotlari</h2>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Shop Info -->
+    <div class="bg-white shadow-lg rounded-lg p-6">
+        <h3 class="text-xl font-semibold text-gray-800 mb-4">Do‘kon Ma’lumotlari</h3>
+        <p class="text-gray-600"><strong>Nomi:</strong> {{ shop.name }}</p>
+        <p class="text-gray-600"><strong>Hudud:</strong> {{ shop.region.name }}</p>
+        <p class="text-gray-600"><strong>Manzil:</strong> {{ shop.address }}</p>
+        {% if shop.latitude and shop.longitude %}
+            <p class="text-gray-600">
+                <a href="https://www.google.com/maps/search/?api=1&query={{ shop.latitude }},{{ shop.longitude }}"
+                   target="_blank" class="text-primary hover:underline">Joylashuvni ko‘rish</a>
+            </p>
+        {% endif %}
+        <p class="text-gray-600 mt-2"><strong>Balans:</strong> {{ planned_loan|floatformat:0|intcomma }} so‘m</p>
+    </div>
+
+    <!-- Order Summary -->
+    <div class="bg-white shadow-lg rounded-lg p-6">
+        <h3 class="text-xl font-semibold text-gray-800 mb-4">Buyurtma Statistikasi</h3>
+        <p class="text-gray-600"><strong>Jami buyurtma:</strong> {{ total_order|floatformat:0|intcomma }} so‘m</p>
+        <p class="text-gray-600"><strong>Status:</strong> 
+            <span class="px-2 py-1 rounded-full text-sm font-semibold
+                {% if order.get_status_display == 'Kutilmoqda' %} bg-primary-light text-primary
+                {% elif order.get_status_display == 'Qisman yetkazilgan' %} bg-secondary-light text-secondary
+                {% elif order.get_status_display == 'Yetkazilgan' %} bg-green-100 text-green-700
+                {% endif %}">
+                {{ order.get_status_display }}
+            </span>
+        </p>
+
+        <!-- Action buttons -->
+        {% if order.status == 'Partially Delivered' %}
+            {% if request.user.role == 'manager' or request.user.is_superuser %}
+                <div class="mt-4 flex flex-col gap-2">
+                    <a href="{% url 'mark_fully_delivered' order.id %}" 
+                       class="w-full inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                        Mark as Fully Delivered
+                    </a>
+                    <a href="{% url 'confirm_delivery' order.id %}" 
+                       class="w-full inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                        Confirm Delivery
+                    </a>
+                </div>
+            {% elif request.user.role == 'driver' %}
+                <a href="{% url 'confirm_delivery' order.id %}" 
+                   class="mt-4 inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                    Tasdiqlash
+                </a>
+            {% endif %}
+        {% elif request.user.role == 'driver' %}
+            <a href="{% url 'confirm_delivery' order.id %}" 
+               class="mt-4 inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                Tasdiqlash
+            </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Products Table -->
+<div class="bg-white shadow-lg rounded-lg p-6 overflow-x-auto">
+    <h3 class="text-xl font-semibold text-gray-800 mb-4">Buyurtma Mahsulotlari</h3>
+    <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+            <tr>
+                <th class="px-4 py-2 text-left text-gray-600 font-medium">Mahsulot</th>
+                <th class="px-4 py-2 text-center text-gray-600 font-medium">Rejalashtirilgan</th>
+                <th class="px-4 py-2 text-center text-gray-600 font-medium">Yetkazilgan</th>
+                <th class="px-4 py-2 text-center text-gray-600 font-medium">Narx (so‘m)</th>
+                <th class="px-4 py-2 text-center text-gray-600 font-medium">Jami</th>
+            </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+            {% for item in order.items.all %}
+            <tr>
+                <td class="px-4 py-2">{{ item.product.name }}</td>
+                <td class="px-4 py-2 text-center">{{ item.quantity }}</td>
+                <td class="px-4 py-2 text-center">{{ item.delivered_quantity|default:0 }}</td>
+                <td class="px-4 py-2 text-center">{{ item.unit_price|floatformat:0|intcomma }}</td>
+                <td class="px-4 py-2 text-center">{{ item.total_price|floatformat:0|intcomma }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
