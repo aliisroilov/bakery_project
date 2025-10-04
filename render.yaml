@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: bakery-app
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn bakery_project.wsgi:application
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bakery-db
+          property: connectionString
+
+databases:
+  - name: bakery-db
+    plan: free
