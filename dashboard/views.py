@@ -1,31 +1,35 @@
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.decorators import login_required
-from orders.models import Order
-from shops.models import Shop, Region
-from django.db.models import Sum, DecimalField, Value
 from django.utils import timezone
-from .forms import LoanRepaymentForm
-from django.contrib import messages
-from .models import LoanRepayment, Payment
+from django.db.models import Sum, DecimalField, Value
 from django.db.models.functions import Coalesce
-from orders.models import Order, OrderItem
-from shops.models import Shop
-from reports.models import Purchase
-from decimal import Decimal
-from users.decorators import viewer_required
+from django.contrib import messages
 from django.http import HttpResponseForbidden, JsonResponse
+from decimal import Decimal
 from django.db import connection
+
+from orders.models import Order, OrderItem
+from shops.models import Shop, Region
+from .forms import LoanRepaymentForm
+from .models import Payment
+from reports.models import Purchase, BakeryBalance
+from users.decorators import viewer_required
 
 try:
     from dashboard.models import LoanRepayment
 except Exception:
     LoanRepayment = None
 
+
+# --- Utility: check DB engine ---
 def db_check(request):
     return JsonResponse({"db_engine": connection.vendor})
 
+
+# --- VIEWER DASHBOARD ---
 @login_required
 def viewer_dashboard(request):
+    """Simple dashboard for viewer users (read-only)."""
     if request.user.role != "viewer":
         return HttpResponseForbidden("You are not allowed to view this page.")
 
@@ -39,30 +43,19 @@ def viewer_dashboard(request):
         "delivered": orders.filter(status="Delivered").count(),
     }
 
-    # Purchases today (sum of unit_price)
     purchases_total = Purchase.objects.filter(purchase_date=today).aggregate(
         total=Coalesce(Sum("unit_price"), Value(0), output_field=DecimalField())
     )["total"] or Decimal(0)
 
-    # Shop loans
     shop_loans = {shop.id: shop.loan_balance for shop in Shop.objects.all()}
     total_loan = sum(shop_loans.values()) or Decimal(0)
 
-    # Today’s received money
     received_money = Payment.objects.filter(
         date__date=today, payment_type="collection"
     ).aggregate(total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField()))["total"] or Decimal(0)
 
-    # Bakery balance (all-time) = all inflows - purchases
-    total_payments_all = Payment.objects.aggregate(
-        total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField())
-    )["total"] or Decimal(0)
-
-    total_purchases_all = Purchase.objects.aggregate(
-        total=Coalesce(Sum("unit_price"), Value(0), output_field=DecimalField())
-    )["total"] or Decimal(0)
-
-    bakery_balance = Decimal(total_payments_all) - Decimal(total_purchases_all)
+    # ✅ Unified Bakery Balance
+    bakery_balance = BakeryBalance.get_instance().amount
 
     context = {
         "stats": stats,
@@ -71,13 +64,13 @@ def viewer_dashboard(request):
         "purchases_total": purchases_total,
         "bakery_balance": bakery_balance,
     }
-
-    # 🔑 Different template: only stats (6 blocks, no orders list)
     return render(request, "dashboard/admins/dashboard.html", context)
 
 
+# --- MANAGER/ADMIN DASHBOARD ---
 @login_required
 def dashboard_view(request):
+    """Full dashboard with financial summaries."""
     today = timezone.now().date()
     orders = Order.objects.filter(created_at__date=today)
 
@@ -88,35 +81,23 @@ def dashboard_view(request):
         "delivered": orders.filter(status="Delivered").count(),
     }
 
-    # Purchases today (sum of unit_price)
     purchases_total = Purchase.objects.filter(purchase_date=today).aggregate(
         total=Coalesce(Sum("unit_price"), Value(0), output_field=DecimalField())
     )["total"] or Decimal(0)
 
-    # Shop loans
     shop_loans = {shop.id: shop.loan_balance for shop in Shop.objects.all()}
     total_loan = sum(shop_loans.values()) or Decimal(0)
 
-    # --- TODAY driver-collected money (Bugungi tushum) ---
     received_money = Payment.objects.filter(
         date__date=today, payment_type="collection"
     ).aggregate(total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField()))["total"] or Decimal(0)
 
-    # optional: repayments today (show separately)
     repayments_today = Payment.objects.filter(
         date__date=today, payment_type="repayment"
     ).aggregate(total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField()))["total"] or Decimal(0)
 
-    # --- Bakery balance (all-time) = all inflows (payments) - purchases (expenses) ---
-    total_payments_all = Payment.objects.aggregate(
-        total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField())
-    )["total"] or Decimal(0)
-
-    total_purchases_all = Purchase.objects.aggregate(
-        total=Coalesce(Sum("unit_price"), Value(0), output_field=DecimalField())
-    )["total"] or Decimal(0)
-
-    bakery_balance = Decimal(total_payments_all) - Decimal(total_purchases_all)
+    # ✅ Unified Bakery Balance — always correct and synced via signals
+    bakery_balance = BakeryBalance.get_instance().amount
 
     context = {
         "orders": orders,
@@ -131,12 +112,13 @@ def dashboard_view(request):
     return render(request, "dashboard/dashboard.html", context)
 
 
+# --- DISTRICTS OVERVIEW ---
 @login_required
 def districts_view(request):
+    """Show per-district delivery statistics for today."""
     today = timezone.now().date()
     districts = Region.objects.all()
 
-    # Prepare stats for each district as list of tuples
     district_list = []
     for district in districts:
         orders = Order.objects.filter(shop__region=district, created_at__date=today)
@@ -152,38 +134,37 @@ def districts_view(request):
     })
 
 
+# --- DISTRICT DETAIL ---
 @login_required
 def district_detail_view(request, district_id):
-    """Show all shops and orders in a district (today only)."""
+    """Show all shops and orders in a specific district (today only)."""
     district = get_object_or_404(Region, id=district_id)
     today = timezone.now().date()
-    
-    # Orders in the district, today only
+
     orders = Order.objects.filter(
-        shop__region=district,
-        created_at__date=today
+        shop__region=district, created_at__date=today
     ).order_by("shop__name")
-    
-    # Optional: Calculate planned loan per shop excluding today
+
     shop_loans = {}
     shops_in_orders = set(order.shop for order in orders)
     for shop in shops_in_orders:
         past_orders = shop.orders.exclude(created_at__date=today)
-        planned_loan = 0
-        for o in past_orders:
-            for item in o.items.all():
-                planned_loan += item.total_price
+        planned_loan = sum(
+            item.total_price for o in past_orders for item in o.items.all()
+        )
         shop_loans[shop.id] = planned_loan
 
     return render(request, "dashboard/district_detail.html", {
         "district": district,
         "orders": orders,
-        "shop_loans": shop_loans
+        "shop_loans": shop_loans,
     })
 
 
+# --- LOAN REPAYMENT ---
 @login_required
 def loan_repayment_view(request):
+    """Form for managers to register loan repayments."""
     if request.method == "POST":
         form = LoanRepaymentForm(request.POST)
         if form.is_valid():
@@ -197,10 +178,11 @@ def loan_repayment_view(request):
                 shop.loan_balance = 0
             shop.save()
 
-            # Record repayment model (if you keep it)
-            LoanRepayment.objects.create(shop=shop, amount=amount)
+            # Record repayment entry
+            if LoanRepayment:
+                LoanRepayment.objects.create(shop=shop, amount=amount)
 
-            # ALSO record a Payment so dashboard/tushum can use it if desired
+            # Record Payment so it appears in reports & updates balance
             Payment.objects.create(
                 shop=shop,
                 amount=amount,
@@ -208,6 +190,8 @@ def loan_repayment_view(request):
                 collected_by=request.user,
                 notes="Loan repayment via form"
             )
+
+            # ✅ BakeryBalance auto-updated via signals (no manual update needed)
 
             messages.success(request, f"{shop.name} uchun {amount} so‘m qarz to‘landi.")
             return redirect("loan_repayment")

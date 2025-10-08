@@ -5,7 +5,8 @@ from django.db.models import F
 from django.utils import timezone
 from .models import Ingredient, Purchase, Production
 from .forms import IngredientForm, PurchaseForm, ProductionForm
-
+from reports.models import Purchase as ReportPurchase
+from decimal import Decimal
 
 def inventory_dashboard(request):
     ingredients = Ingredient.objects.select_related("unit").all().order_by("name")
@@ -80,10 +81,21 @@ def purchase_create(request):
         if form.is_valid():
             with transaction.atomic():
                 purchase = form.save()
-                # increase ingredient stock
                 ing = purchase.ingredient
                 ing.quantity = F("quantity") + purchase.quantity
                 ing.save(update_fields=["quantity"])
+
+                # 🔹 Add record to reports
+                try:
+                    total_price = purchase.price or Decimal("0")
+                    ReportPurchase.objects.create(
+                        item_name=f"{ing.name} ({purchase.quantity} {ing.unit.short or ing.unit.name})",
+                        unit_price=total_price,
+                        purchase_date=purchase.date.date(),
+                        notes=purchase.note or "Omborga ingredient xaridi",
+                    )
+                except Exception as e:
+                    print(f"[Reports Sync Error] Could not record purchase: {e}")
 
             messages.success(request, "✅ Xarid muvaffaqiyatli qo‘shildi!")
             return redirect("inventory:purchase_list")
@@ -91,6 +103,7 @@ def purchase_create(request):
         form = PurchaseForm()
 
     return render(request, "inventory/purchase_form.html", {"form": form})
+
 
 
 # 🛒 Purchase Edit
