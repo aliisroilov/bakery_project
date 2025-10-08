@@ -105,7 +105,7 @@
             {% elif request.user.role == 'driver' %}
                 <a href="{% url 'districts' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hududlar</a>
             {% elif request.user.role == 'viewer' %}
-                <a href="{% url 'inventory:dashboard' %}" class="text-gray-700 hover-text-primary-dark">Ombor</a>
+                <a href="{% url 'inventory:inventory_dashboard' %}" class="text-gray-700 hover-text-primary-dark">Ombor</a>
                 <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
             {% endif %}
         </aside>
