@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% load widget_tweaks %}
+{% block title %}Buyurtma qo'shish{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto bg-white shadow-xl rounded-3xl p-8 mt-10 border border-orange-100 hover:border-orange-200 transition-all">
+  <h1 class="text-3xl font-bold text-orange-600 mb-6 flex items-center gap-2">
+    Yangi Buyurtma
+  </h1>
+
+  <form method="post" class="space-y-8">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {% for field in form %}
+      <div>
+        <label for="{{ field.id_for_label }}" class="block font-semibold text-gray-800 mb-2">
+          {{ field.label }}
+        </label>
+        {{ field|add_class:"w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:ring-2 focus:ring-orange-400 focus:border-orange-400 text-gray-800 placeholder-gray-400" }}
+        {% if field.help_text %}
+        <p class="text-gray-500 text-sm">{{ field.help_text }}</p>
+        {% endif %}
+        {% for error in field.errors %}
+        <p class="text-red-500 text-sm mt-1">{{ error }}</p>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="flex justify-between items-center mt-6">
+      <a href="{% url 'inventory:production_history' %}"
+         class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-all">
+        ← Orqaga
+      </a>
+      <button type="submit"
+              class="px-6 py-2 bg-orange-600 text-white font-semibold rounded-lg hover:bg-orange-700 shadow-md hover:shadow-lg transition-all">
+        Saqlash
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

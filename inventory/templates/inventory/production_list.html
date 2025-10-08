@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="container mx-auto px-6 py-10">
+  <!-- Header -->
+  <div class="flex justify-between items-center mb-8">
+    <h1 class="text-3xl font-bold text-orange-600">Buyurtmalar tarixi(qoplarda)</h1>
+    <a href="{% url 'inventory:production_create' %}" 
+       class="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-4 py-2 rounded-lg shadow">
+       ➕ Yangi buyurtma
+    </a>
+  </div>
+
+  <!-- Table -->
+  <div class="bg-white rounded-2xl shadow overflow-x-auto border border-gray-100">
+    <table class="min-w-full text-sm text-gray-700">
+      <thead class="bg-gray-50 text-gray-600 uppercase text-xs tracking-wider">
+        <tr>
+          <th class="px-6 py-3 text-left">#</th>
+          <th class="px-6 py-3 text-left">Mahsulot</th>
+          <th class="px-6 py-3 text-left">Qop soni</th>
+          <th class="px-6 py-3 text-left">Sana</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for prod in productions %}
+        <tr class="hover:bg-gray-50 transition">
+          <td class="px-6 py-3">{{ forloop.counter }}</td>
+          <td class="px-6 py-3 font-medium text-gray-900">{{ prod.product.name }}</td>
+          <td class="px-6 py-3">{{ prod.meshok_count }}</td>
+          <td class="px-6 py-3 text-gray-500">{{ prod.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="4" class="px-6 py-4 text-center text-gray-500">
+            Buyurtmalar topilmadi.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Back link -->
+
+</div>
+
+{% endblock %}

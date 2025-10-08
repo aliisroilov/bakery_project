@@ -5,6 +5,7 @@ from .forms import ConfirmDeliveryForm
 from dashboard.models import Payment
 from datetime import datetime, timedelta, time
 from django.utils import timezone
+from zoneinfo import ZoneInfo
 
 def order_detail(request, order_id):
     order = get_object_or_404(Order, id=order_id)
@@ -13,10 +14,11 @@ def order_detail(request, order_id):
     # Sum of current order
     total_order = sum([item.total_price for item in order.items.all()])
 
-    # Determine cutoff: yesterday after 5 PM
-    now = timezone.localtime()
+    # Use Uzbekistan timezone explicitly
+    uz_tz = ZoneInfo("Asia/Tashkent")
+    now = timezone.now().astimezone(uz_tz)
     yesterday = now.date() - timedelta(days=1)
-    cutoff = timezone.make_aware(datetime.combine(yesterday, time(17, 0)))
+    cutoff = datetime.combine(yesterday, time(17, 0), tzinfo=uz_tz)
 
     # Past orders excluding current order, but only after cutoff
     past_orders = shop.orders.exclude(id=order.id).filter(created_at__gt=cutoff)
@@ -28,9 +30,8 @@ def order_detail(request, order_id):
         "order": order,
         "shop": shop,
         "total_order": total_order,
-        "planned_loan": planned_loan
+        "planned_loan": planned_loan,
     })
-
 
 def confirm_delivery(request, order_id):
     order = get_object_or_404(Order, id=order_id)

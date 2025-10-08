@@ -13,14 +13,16 @@ from shops.models import Shop
 from reports.models import Purchase
 from decimal import Decimal
 from users.decorators import viewer_required
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseForbidden, JsonResponse
+from django.db import connection
 
 try:
     from dashboard.models import LoanRepayment
 except Exception:
     LoanRepayment = None
 
-
+def db_check(request):
+    return JsonResponse({"db_engine": connection.vendor})
 
 @login_required
 def viewer_dashboard(request):

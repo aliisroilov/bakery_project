@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Ingredients{% endblock %}
+{% block content %}
+
+<div class="p-6">
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="text-2xl font-bold text-orange-600">🧂 Ingredients</h1>
+  </div>
+
+  <div class="bg-white rounded-2xl shadow overflow-hidden">
+    <div class="overflow-y-auto max-h-[70vh]">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-orange-50 text-gray-700 uppercase text-xs">
+          <tr>
+            <th class="py-3 px-4">Name</th>
+            <th class="py-3 px-4">Unit</th>
+            <th class="py-3 px-4">Quantity</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          {% for ing in ingredients %}
+          <tr class="hover:bg-orange-50 transition">
+            <td class="py-2 px-4 font-medium">{{ ing.name }}</td>
+            <td class="py-2 px-4 text-gray-600">{{ ing.unit.abbreviation }}</td>
+            <td class="py-2 px-4">{{ ing.quantity }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="3" class="text-center py-4 text-gray-400">No ingredients yet</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

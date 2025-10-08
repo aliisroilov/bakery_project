@@ -2,14 +2,23 @@
 
 {% block content %}
 <div class="container mx-auto px-4 mt-8">
+    <!-- Header -->
     <div class="flex justify-between items-center mb-6">
-        <h1 class="text-3xl font-bold text-primary">📑 Все отчёты</h1>
+        <h1 class="text-3xl font-bold text-primary flex items-center gap-2">
+            📑 Все отчёты
+        </h1>
 
         <!-- Add Purchase Button -->
         <a href="{% url 'reports:purchase_create' %}" 
            class="bg-primary hover:bg-secondary text-white px-5 py-2 rounded-lg shadow transition flex items-center gap-2">
             ➕ Расход
         </a>
+    </div>
+
+    <!-- 💰 Current Balance -->
+    <div class="bg-green-100 border border-green-300 text-green-800 px-5 py-3 rounded-lg mb-6 shadow-sm">
+        💰 <span class="font-semibold">Joriy balans:</span> 
+        <span class="text-lg font-bold">{{ current_balance|floatformat:0 }} so‘m</span>
     </div>
 
     <!-- Filter form -->

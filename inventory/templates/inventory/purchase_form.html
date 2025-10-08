@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% load widget_tweaks %}
+{% block title %}🛒 Yangi Xarid Qo‘shish{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-amber-50 via-white to-stone-100 py-12 px-6">
+  <div class="max-w-2xl mx-auto bg-white shadow-xl rounded-3xl p-8 border border-amber-200 hover:border-amber-300 transition-all">
+
+    <h2 class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-amber-700 mb-8 flex items-center gap-2">
+      🛒 Yangi Xarid Qo‘shish
+    </h2>
+
+    <form method="post" class="space-y-6">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+
+      <!-- Ingredient -->
+      <div>
+        <label class="block text-gray-800 font-semibold mb-2">Mahsulot</label>
+        {{ form.ingredient|add_class:"w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:ring-2 focus:ring-green-400 focus:border-green-400 text-gray-800 placeholder-gray-400" }}
+      </div>
+
+      <!-- Quantity -->
+      <div>
+        <label class="block text-gray-800 font-semibold mb-2">Miqdor</label>
+        {{ form.quantity|add_class:"w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:ring-2 focus:ring-green-400 focus:border-green-400 text-gray-800 placeholder-gray-400" }}
+      </div>
+
+      <!-- Price -->
+      <div>
+        <label class="block text-gray-800 font-semibold mb-2">Narxi (so‘m)</label>
+        {{ form.price|add_class:"w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:ring-2 focus:ring-green-400 focus:border-green-400 text-gray-800 placeholder-gray-400" }}
+      </div>
+
+      <!-- Date -->
+      <div>
+        <label class="block text-gray-800 font-semibold mb-2">Sana</label>
+        {{ form.date|add_class:"w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:ring-2 focus:ring-green-400 focus:border-green-400 text-gray-800 placeholder-gray-400" }}
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex items-center gap-4 pt-6">
+        <button type="submit"
+          class="bg-gradient-to-r from-green-500 to-green-700 hover:from-green-600 hover:to-green-800 text-white font-semibold px-6 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5">
+          💾 Saqlash
+        </button>
+        <a href="{% url 'inventory:purchase_list' %}"
+           class="text-gray-600 hover:text-amber-700 font-medium transition-colors">
+          Bekor qilish
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

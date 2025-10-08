@@ -5,9 +5,11 @@ from datetime import datetime
 from django.contrib import messages
 from .forms import CategoryForm, PurchaseForm
 from orders.models import OrderItem
-from .models import Purchase, Category
-from dashboard.models import LoanRepayment
+from .models import Purchase, Category, BakeryBalance
+from dashboard.models import LoanRepayment, Payment
 from shops.models import Shop
+from decimal import Decimal
+ # add BakeryBalance
 
 
 def manager_or_admin_required(view_func):
@@ -189,53 +191,91 @@ def purchase_delete(request, pk):
 
 
 def all_reports(request):
+    start_date = request.GET.get("start_date")
+    end_date = request.GET.get("end_date")
+
+    # Ma'lumotlarni olish
+    purchases = Purchase.objects.all()
+    repayments = LoanRepayment.objects.all()
+    payments = Payment.objects.filter(payment_type="collection")
+
+    # Faqat tasdiqlangan yoki yetkazilgan buyurtmalarni olish
+    delivered_items = OrderItem.objects.select_related("order", "product", "order__shop") \
+                                       .filter(order__status__in=["Delivered", "confirmed"])
+
+    # Sana bo‘yicha filtrlash
+    if start_date:
+        purchases = purchases.filter(purchase_date__gte=start_date)
+        repayments = repayments.filter(date__gte=start_date)
+        payments = payments.filter(date__gte=start_date)
+        delivered_items = delivered_items.filter(order__created_at__date__gte=start_date)
+
+    if end_date:
+        purchases = purchases.filter(purchase_date__lte=end_date)
+        repayments = repayments.filter(date__lte=end_date)
+        payments = payments.filter(date__lte=end_date)
+        delivered_items = delivered_items.filter(order__created_at__date__lte=end_date)
+
+    # Barcha hisobot yozuvlarini jamlash
     reports = []
 
-    # ---------------- Sales (Приход) ----------------
-    for item in OrderItem.objects.select_related("order__shop", "product"):
-        reports.append({
-            "date": item.order.created_at.date(),
-            "category": "Приход",
-            "description": f"Sotuv - {item.product.name}",
-            "counterparty": item.order.shop.name,
-            "income": float(item.total_price),
-            "expense": None,
-        })
-
-    # ---------------- Purchases (Расход) ----------------
-    for p in Purchase.objects.select_related("category"):
+    # === Xaridlar (Purchases) ===
+    for p in purchases:
         reports.append({
             "date": p.purchase_date,
-            "category": "Расход",
-            "description": f"Xarid - {p.item_name}",
-            "counterparty": p.category.name,
+            "category": "Xarid",
+            "description": p.notes or p.item_name or "Mahsulot xaridi",
+            "counterparty": "-",
             "income": None,
-            "expense": float(p.unit_price),
+            "expense": p.unit_price or Decimal("0")
         })
 
-    # ---------------- Loan Repayments (Приход) ----------------
-    for r in LoanRepayment.objects.select_related("shop"):
+    # === Qarz to‘lovlari (Loan repayments) ===
+    for r in repayments:
         reports.append({
-            "date": r.date.date(),
-            "category": "Приход",
-            "description": "Qarz to‘lovi",
+            "date": r.date,
+            "category": "Qarz to‘lovi",
+            "description": f"{r.shop.name} dan to‘lov",
             "counterparty": r.shop.name,
-            "income": float(r.amount),
-            "expense": None,
+            "income": r.amount or Decimal("0"),
+            "expense": None
         })
 
-    # ---------------- Sort by Date ----------------
-    reports = sorted(reports, key=lambda x: x["date"])
+    # === To‘lov yig‘imlari (Payment collections) ===
+    for pay in payments:
+        reports.append({
+            "date": pay.date,
+            "category": "To‘lov yig‘imi",
+            "description": f"{pay.shop.name} dan to‘lov",
+            "counterparty": pay.shop.name,
+            "income": pay.amount or Decimal("0"),
+            "expense": None
+        })
 
-    # ---------------- Running Balance ----------------
-    balance = 0
+    # === Sotuvlar (Sales) — faqat tasdiqlangan buyurtmalardan ===
+    for item in delivered_items:
+        reports.append({
+            "date": item.order.created_at.date() if isinstance(item.order.created_at, datetime) else item.order.created_at,
+            "category": "Sotuv",
+            "description": f"{item.product.name} x {item.delivered_quantity}",
+            "counterparty": item.order.shop.name,
+            "income": item.unit_price * item.delivered_quantity,
+            "expense": None
+        })
+
+    # Sana formatlarini bir xil qilish
     for r in reports:
-        if r["income"]:
-            balance += r["income"]
-        if r["expense"]:
-            balance -= r["expense"]
-        r["balance"] = balance
+        if isinstance(r["date"], datetime):
+            r["date"] = r["date"].date()
 
+    # Sana bo‘yicha tartiblash
+    reports.sort(key=lambda x: x["date"])
+
+    # Hozirgi balansni olish
+    current_balance = BakeryBalance.get_instance().amount
+
+    # Hisobot sahifasini qaytarish
     return render(request, "reports/all_reports.html", {
-        "reports": reports
+        "reports": reports,
+        "current_balance": current_balance,
     })

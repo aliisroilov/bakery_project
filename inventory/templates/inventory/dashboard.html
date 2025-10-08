@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Ombor Boshqaruvi{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gradient-to-br from-[#FAF8F5] via-[#FFFDF8] to-[#F6C87B]/10 py-10 px-6">
+
+  <!-- Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-10">
+    <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] drop-shadow-sm mb-4 sm:mb-0">
+      Ombor Boshqaruvi
+    </h1>
+    <div class="flex gap-3">
+      <a href="{% url 'inventory:purchase_create' %}"
+         class="bg-gradient-to-r from-[#E6B566] to-[#B67B3F] hover:from-[#DFAE59] hover:to-[#9C6A33] text-white px-5 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 text-sm font-semibold">
+         + Xarid Qo‘shish
+      </a>
+      <a href="{% url 'inventory:production_create' %}"
+         class="bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] hover:from-[#A36E33] hover:to-[#F1C05A] text-white px-5 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 text-sm font-semibold">
+         + Ishlab Chiqarish
+      </a>
+    </div>
+  </div>
+
+  <!-- Recent Activity -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+    <!-- Purchases -->
+    <div class="bg-white/80 backdrop-blur-lg rounded-3xl shadow-lg border border-[#F6C87B]/40 hover:border-[#E6B566]/70 transition-all p-6">
+      <div class="flex justify-between items-center mb-5">
+        <h2 class="text-2xl font-bold text-[#B67B3F] flex items-center gap-2">So‘nggi Xaridlar</h2>
+        <a href="{% url 'inventory:purchase_list' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko‘rish</a>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-[#E6B566]/40">
+        <table class="w-full text-sm text-left text-gray-700">
+          <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
+            <tr>
+              <th class="px-4 py-3">Mahsulot</th>
+              <th class="px-4 py-3 text-right">Miqdori</th>
+              <th class="px-4 py-3 text-right">Sana</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for purchase in recent_purchases %}
+            <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
+              <td class="px-4 py-2 font-medium">{{ purchase.ingredient.name }}</td>
+              <td class="px-4 py-2 text-right text-[#A36E33] font-semibold">+{{ purchase.quantity|floatformat:2 }}</td>
+              <td class="px-4 py-2 text-right text-gray-500">{{ purchase.created_at|date:"d M Y" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="3" class="text-center py-4 text-gray-400">Xaridlar mavjud emas.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Productions -->
+    <div class="bg-white/80 backdrop-blur-lg rounded-3xl shadow-lg border border-[#D9D3D0]/60 hover:border-[#B67B3F]/60 transition-all p-6">
+      <div class="flex justify-between items-center mb-5">
+        <h2 class="text-2xl font-bold text-[#A36E33] flex items-center gap-2">So‘nggi buyurtmalar</h2>
+        <a href="{% url 'inventory:production_history' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko'rish</a>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-[#E6B566]/40">
+        <table class="w-full text-sm text-left text-gray-700">
+          <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
+            <tr>
+              <th class="px-4 py-3">Mahsulot</th>
+              <th class="px-4 py-3 text-right">Qop</th>
+              <th class="px-4 py-3 text-right">Sana</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for production in recent_productions %}
+            <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
+              <td class="px-4 py-2 font-medium">{{ production.product.name }}</td>
+              <td class="px-4 py-2 text-right text-[#A36E33] font-semibold">-{{ production.meshok|floatformat:2 }}</td>
+              <td class="px-4 py-2 text-right text-gray-500">{{ production.date|date:"d M Y" }}</td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="3" class="text-center py-4 text-gray-400">Buyurtmalar yo‘q.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ingredients Overview -->
+  <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8">
+    <div class="flex justify-between items-center mb-5">
+      <h2 class="text-2xl font-bold text-[#8A6233] flex items-center gap-2">Ombordagi Mahsulotlar</h2>
+    </div>
+
+    <div class="overflow-x-auto rounded-xl border border-[#E6B566]/30">
+      <table class="w-full text-sm text-left text-gray-700">
+        <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
+          <tr>
+            <th class="px-4 py-3">Mahsulot</th>
+            <th class="px-4 py-3">O‘lchov</th>
+            <th class="px-4 py-3 text-right">Miqdori</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ingredient in ingredients %}
+          <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
+            <td class="px-4 py-2 font-semibold text-gray-800">{{ ingredient.name }}</td>
+            <td class="px-4 py-2 text-gray-600">{{ ingredient.unit.abbreviation }}</td>
+            <td class="px-4 py-2 text-right font-medium text-[#A36E33]">{{ ingredient.quantity|floatformat:2 }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="3" class="text-center py-4 text-gray-400">Mahsulotlar topilmadi.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
