@@ -8,30 +8,38 @@ from django.utils import timezone
 from zoneinfo import ZoneInfo
 
 def order_detail(request, order_id):
+    """
+    Display details of a single order.
+    - planned_loan sums all past orders (all time) for this shop.
+    - Only the current order is shown explicitly in the page.
+    """
+    # Get the order and related shop
     order = get_object_or_404(Order, id=order_id)
     shop = order.shop
 
-    # Sum of current order
-    total_order = sum([item.total_price for item in order.items.all()])
+    # Total value of the current order
+    total_order = sum(item.total_price for item in order.items.all())
 
     # Use Uzbekistan timezone explicitly
     uz_tz = ZoneInfo("Asia/Tashkent")
-    now = timezone.now().astimezone(uz_tz)
-    yesterday = now.date() - timedelta(days=1)
-    cutoff = datetime.combine(yesterday, time(17, 0), tzinfo=uz_tz)
+    today = timezone.now().astimezone(uz_tz).date()
 
-    # Past orders excluding current order, but only after cutoff
-    past_orders = shop.orders.exclude(id=order.id).filter(created_at__gt=cutoff)
+    # All past orders excluding current one (for planned loan calculation)
+    past_orders = shop.orders.exclude(id=order.id)
 
-    # Planned loan (sum of past orders items)
-    planned_loan = sum([item.total_price for o in past_orders for item in o.items.all()])
+    # Planned loan = sum of all items in past orders
+    planned_loan = sum(item.total_price for o in past_orders for item in o.items.all())
 
-    return render(request, "orders/order_detail.html", {
+    context = {
         "order": order,
         "shop": shop,
         "total_order": total_order,
         "planned_loan": planned_loan,
-    })
+        "today": today,  # optional if template wants to display today
+    }
+
+    return render(request, "orders/order_detail.html", context)
+
 
 def confirm_delivery(request, order_id):
     order = get_object_or_404(Order, id=order_id)

@@ -1,16 +1,15 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import F
 from django.utils import timezone
 from .models import Ingredient, Purchase, Production
 from .forms import IngredientForm, PurchaseForm, ProductionForm
 from reports.models import Purchase as ReportPurchase
 from decimal import Decimal
 
+
 def inventory_dashboard(request):
     ingredients = Ingredient.objects.select_related("unit").all().order_by("name")
-    
     recent_purchases = Purchase.objects.select_related("ingredient").order_by("-date")[:5]
     recent_productions = Production.objects.select_related("product").order_by("-date")[:5]
 
@@ -21,7 +20,7 @@ def inventory_dashboard(request):
     })
 
 
-# Ingredient List + Create
+# 🧂 Ingredient List + Create
 def ingredient_list(request):
     ingredients = Ingredient.objects.select_related("unit").all().order_by("name")
 
@@ -74,28 +73,24 @@ def purchase_list(request):
     return render(request, "inventory/purchase_list.html", {"purchases": purchases})
 
 
-# 🛒 Purchase Create
+# 🛒 Purchase Create (Fixed)
 def purchase_create(request):
     if request.method == "POST":
         form = PurchaseForm(request.POST)
         if form.is_valid():
-            with transaction.atomic():
-                purchase = form.save()
-                ing = purchase.ingredient
-                ing.quantity = F("quantity") + purchase.quantity
-                ing.save(update_fields=["quantity"])
+            purchase = form.save()  # just save, do NOT touch ingredient.quantity
 
-                # 🔹 Add record to reports
-                try:
-                    total_price = purchase.price or Decimal("0")
-                    ReportPurchase.objects.create(
-                        item_name=f"{ing.name} ({purchase.quantity} {ing.unit.short or ing.unit.name})",
-                        unit_price=total_price,
-                        purchase_date=purchase.date.date(),
-                        notes=purchase.note or "Omborga ingredient xaridi",
-                    )
-                except Exception as e:
-                    print(f"[Reports Sync Error] Could not record purchase: {e}")
+            # 🔹 Add record to reports
+            try:
+                total_price = purchase.price or Decimal("0")
+                ReportPurchase.objects.create(
+                    item_name=f"{purchase.ingredient.name} ({purchase.quantity} {purchase.ingredient.unit.short or purchase.ingredient.unit.name})",
+                    unit_price=total_price,
+                    purchase_date=purchase.date.date(),
+                    notes=purchase.note or "Omborga ingredient xaridi",
+                )
+            except Exception as e:
+                print(f"[Reports Sync Error] Could not record purchase: {e}")
 
             messages.success(request, "✅ Xarid muvaffaqiyatli qo‘shildi!")
             return redirect("inventory:purchase_list")
@@ -104,27 +99,19 @@ def purchase_create(request):
 
     return render(request, "inventory/purchase_form.html", {"form": form})
 
-
-
-# 🛒 Purchase Edit
-
-
-
 # 🗑️ Purchase Delete
 def purchase_delete(request, pk):
     purchase = get_object_or_404(Purchase, pk=pk)
-    if request.method == "POST":
+    if request.method == "POST__":
         with transaction.atomic():
-            purchase.ingredient.quantity = F("quantity") - purchase.quantity
-            purchase.ingredient.save(update_fields=["quantity"])
-            purchase.delete()
+            purchase.delete()  # ✅ Signals will automatically decrease stock & restore balance
         messages.success(request, "🛒 Xarid o‘chirildi.")
         return redirect("inventory:purchase_list")
 
     return render(request, "inventory/confirm_delete.html", {"object": purchase})
 
 
-# 🏭 Production List (History)
+# 🏭 Production List
 def production_list(request):
     productions = Production.objects.select_related("product").order_by("-date")
     return render(request, "inventory/production_list.html", {"productions": productions})
@@ -138,8 +125,10 @@ def production_create(request):
             production = form.save(commit=False)
             production.date = timezone.now()
             production.save()
+            
+            # Apply ingredient consumption according to recipe
+            production.apply_consumption()
 
-            # You can later link recipe logic here if needed
             messages.success(request, "🏭 Ishlab chiqarish muvaffaqiyatli qo‘shildi!")
             return redirect("inventory:production_history")
     else:

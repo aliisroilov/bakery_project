@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load widget_tweaks %}
 {% block title %}Buyurtmani Tasdiqlash{% endblock %}
 
 {% block content %}
@@ -8,26 +9,26 @@
     <h3 class="text-xl font-semibold text-gray-800 mb-4">Kontragent: {{ order.shop.name }}</h3>
     <p class="text-gray-500 mb-4">Hudud: {{ order.shop.region.name }}</p>
 
-    <form method="POST">
+    <form method="POST" class="space-y-6">
         {% csrf_token %}
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
+                <thead class="bg-gray-100">
                     <tr>
-                        <th class="px-4 py-2 text-left text-gray-600 font-medium">Mahsulot</th>
-                        <th class="px-4 py-2 text-center text-gray-600 font-medium">Rejadagi miqdor</th>
-                        <th class="px-4 py-2 text-center text-gray-600 font-medium">Yetkazildi</th>
+                        <th class="px-4 py-3 text-left text-gray-700 font-semibold">Mahsulot</th>
+                        <th class="px-4 py-3 text-center text-gray-700 font-semibold">Rejadagi miqdor</th>
+                        <th class="px-4 py-3 text-center text-gray-700 font-semibold">Yetkazildi</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
                     {% for item, field in fields %}
                     <tr>
-                        <td class="px-4 py-2">{{ item.product.name }}</td>
-                        <td class="px-4 py-2 text-center">{{ item.quantity }}</td>
-                        <td class="px-4 py-2 text-center">
-                            {{ field }}
+                        <td class="px-4 py-3">{{ item.product.name }}</td>
+                        <td class="px-4 py-3 text-center">{{ item.quantity }}</td>
+                        <td class="px-4 py-3 text-center">
+                            {{ field|add_class:"w-20 px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary" }}
                             {% if field.errors %}
-                                <p class="text-red-500 text-sm">{{ field.errors|striptags }}</p>
+                                <p class="text-red-500 text-sm mt-1">{{ field.errors|striptags }}</p>
                             {% endif %}
                         </td>
                     </tr>
@@ -37,16 +38,16 @@
         </div>
 
         <div class="mt-6 flex flex-col sm:flex-row items-center gap-4">
-            <label class="flex flex-col sm:flex-row items-center gap-2">
+            <label class="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
                 <span class="text-gray-700 font-medium">Olingan summa (so'm):</span>
-                {{ form.received_amount }}
+                {{ form.received_amount|add_class:"w-36 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary" }}
                 {% if form.received_amount.errors %}
-                    <p class="text-red-500 text-sm">{{ form.received_amount.errors|striptags }}</p>
+                    <p class="text-red-500 text-sm mt-1">{{ form.received_amount.errors|striptags }}</p>
                 {% endif %}
             </label>
 
             <button type="submit" 
-                class="bg-primary hover:bg-secondary text-white font-bold py-2 px-6 rounded-lg transition duration-300">
+                class="bg-primary hover:bg-primary-dark text-white font-bold py-2 px-6 rounded-lg transition duration-300 w-full sm:w-auto">
                 Tasdiqlash
             </button>
         </div>

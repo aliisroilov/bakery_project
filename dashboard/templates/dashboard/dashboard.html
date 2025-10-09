@@ -29,7 +29,8 @@
 </div>
 
 {% if request.user.role != 'viewer' %}
-<!-- Second Row: Money Stats -->
+<!-- Money Stats (Managers/Admins only) -->
+{% if request.user.role != 'driver' %}
 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mb-8">
     <!-- Received Money Today -->
     <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
@@ -57,14 +58,12 @@
 </div>
 {% endif %}
 
-{% if request.user.role != 'viewer' %}
 <!-- Districts Block -->
 <a href="{% url 'districts' %}" 
    class="block bg-white shadow-lg rounded-lg p-6 hover:shadow-xl hover-bg-primary-dark transition duration-300 mb-8">
    <h3 class="text-xl font-bold text-gray-800">Hududlar bo‘yicha buyurtmalar</h3>
    <p class="text-gray-500">Hududlarni ko‘rish</p>
 </a>
-{% endif %}
 
 <!-- Orders Grid -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -72,19 +71,15 @@
     <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col justify-between hover:shadow-xl transition duration-300">
         <div>
             <h3 class="text-xl font-bold text-gray-800 mb-2 truncate">{{ order.shop.name }}</h3>
-            {% if request.user.role != 'viewer' %}
-                <p class="text-gray-500 mb-1 truncate">Hudud: {{ order.shop.region.name }}</p>
-            {% endif %}
+            <p class="text-gray-500 mb-1 truncate">Hudud: {{ order.shop.region.name }}</p>
             <p class="text-gray-500 mb-1">
                 {% for item in order.items.all %}
                     {{ item.product.name }} x {{ item.quantity }}{% if not forloop.last %}, {% endif %}
                 {% endfor %}
             </p>
-            {% if request.user.role != 'viewer' %}
-                <p class="text-red-600 mb-1 truncate">
-                    Qarz: {{ shop_loans|dict_get:order.shop.id|default:0|floatformat:0|intcomma }} so'm
-                </p>
-            {% endif %}
+            <p class="text-red-600 mb-1 truncate">
+                Qarz: {{ shop_loans|dict_get:order.shop.id|default:0|floatformat:0|intcomma }} so'm
+            </p>
             <span class="px-2 py-1 rounded-full text-sm font-semibold
                 {% if order.get_status_display == 'Kutilmoqda' %} bg-primary-dark text-gray-800
                 {% elif order.get_status_display == 'Qisman yetkazilgan' %} bg-primary-dark text-gray-800
@@ -100,7 +95,7 @@
                    class="w-full inline-block bg-primary hover-bg-primary-dark text-white text-center font-bold py-2 rounded-lg transition duration-300">
                     Tasdiqlash
                 </a>
-            {% elif request.user.role != 'viewer' %}
+            {% else %}
                 <a href="{% url 'order_detail' order.id %}" 
                    class="w-full inline-block bg-primary-dark hover-bg-primary-dark text-white text-center font-medium py-2 rounded-lg transition duration-300">
                     Tafsilotlar
@@ -112,4 +107,6 @@
         <p class="text-gray-500">Bugungi buyurtmalar mavjud emas.</p>
     {% endfor %}
 </div>
+{% endif %}
+
 {% endblock %}

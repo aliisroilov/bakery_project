@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="max-w-6xl mx-auto p-6">
+    <h1 class="text-2xl font-bold mb-4 text-gray-800">Xodimlar ro‘yxati</h1>
+
+    <!-- KASSA BALANSI -->
+    <div class="bg-yellow-50 border border-yellow-300 rounded-xl p-5 mb-6 shadow-sm flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-yellow-800">Kassa balansi:</h2>
+        <span class="text-2xl text-green-700 font-bold">
+            {{ bakery_balance_formatted|default:"0" }} so‘m
+        </span>
+    </div>
+
+    <!-- XODIMLAR RO‘YXATI -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for item in employees %}
+        <div class="bg-white shadow-sm rounded-2xl p-5 border border-gray-100 hover:shadow-lg transition-all duration-200">
+            <div class="flex justify-between items-center mb-3">
+                <h3 class="text-lg font-semibold text-gray-800">
+                    {{ item.employee.username }}
+                </h3>
+                <span class="text-xs px-2 py-1 rounded-full font-medium 
+                    {% if item.employee.role == 'nonvoy' %}bg-blue-100 text-blue-700
+                    {% elif item.employee.role == 'driver' %}bg-purple-100 text-purple-700
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ item.employee.get_role_display }}
+                </span>
+            </div>
+
+            <div class="space-y-2 text-gray-700 text-sm">
+                <p><strong>Umumiy to‘langan:</strong> {{ item.total_paid|default:0 }} so‘m</p>
+                <p><strong>Joriy balans:</strong> {{ item.salary_balance|default:0 }} so‘m</p>
+            </div>
+
+            <button 
+                type="button" 
+                onclick="openPayModal('{{ item.employee.id }}', '{{ item.employee.username }}')" 
+                class="mt-4 w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm transition">
+                To‘lov / Avans berish
+            </button>
+        </div>
+        {% empty %}
+        <p class="text-gray-500 text-center col-span-3">Hozircha xodimlar mavjud emas.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- TO‘LOV MODALI -->
+<div id="payModal" class="fixed inset-0 bg-black/40 flex items-center justify-center hidden z-50 transition-opacity">
+    <div class="bg-white rounded-2xl shadow-xl p-6 w-80 animate-fadeIn">
+        <h2 class="text-lg font-semibold mb-2 text-gray-800">Xodimga to‘lov</h2>
+        <p id="modalEmployeeName" class="text-gray-600 mb-3 text-sm"></p>
+
+        <form method="post" id="payForm">
+            {% csrf_token %}
+            <input type="hidden" name="employee_id" id="employeeIdInput">
+
+            <label for="amount" class="text-sm text-gray-700">To‘lov summasi (so‘m):</label>
+            <input 
+                type="number" 
+                name="amount" 
+                id="amount" 
+                min="0" 
+                step="1000"
+                placeholder="Masalan: 150000"
+                class="w-full border rounded-lg p-2 mt-1 mb-4 focus:ring-2 focus:ring-green-400 focus:outline-none"
+                required>
+
+            <div class="flex justify-end gap-2">
+                <button 
+                    type="button" 
+                    onclick="closePayModal()" 
+                    class="px-3 py-1 rounded-lg border hover:bg-gray-100">
+                    Bekor qilish
+                </button>
+                <button 
+                    type="submit" 
+                    class="px-3 py-1 rounded-lg bg-green-600 text-white hover:bg-green-700">
+                    Tasdiqlash
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- JAVASCRIPT -->
+<script>
+function openPayModal(id, name) {
+    document.getElementById('payModal').classList.remove('hidden');
+    document.getElementById('modalEmployeeName').textContent = `${name} uchun to‘lov miqdorini kiriting`;
+    document.getElementById('employeeIdInput').value = id;
+    document.getElementById('payForm').action = `/users/employees/pay-salary/${id}/`;
+    document.getElementById('amount').focus();
+}
+
+function closePayModal() {
+    document.getElementById('payModal').classList.add('hidden');
+}
+
+// Close modal with ESC key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePayModal();
+});
+</script>
+
+<style>
+@keyframes fadeIn {
+  from {opacity: 0; transform: scale(0.95);}
+  to {opacity: 1; transform: scale(1);}
+}
+.animate-fadeIn { animation: fadeIn 0.2s ease-in-out; }
+</style>
+{% endblock %}

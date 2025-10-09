@@ -26,17 +26,6 @@ class PurchaseForm(forms.ModelForm):
             'note': forms.Textarea(attrs={'rows': 2}),
         }
 
-    def save(self, commit=True):
-        purchase = super().save(commit=False)
-        if commit:
-            with transaction.atomic():
-                purchase.save()
-                # increase ingredient quantity
-                ing = purchase.ingredient
-                ing.quantity = ing.quantity + purchase.quantity
-                ing.save(update_fields=['quantity'])
-        return purchase
-
 class ProductionForm(forms.ModelForm):
     class Meta:
         model = Production

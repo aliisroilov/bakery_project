@@ -109,7 +109,7 @@
           {% for ingredient in ingredients %}
           <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
             <td class="px-4 py-2 font-semibold text-gray-800">{{ ingredient.name }}</td>
-            <td class="px-4 py-2 text-gray-600">{{ ingredient.unit.abbreviation }}</td>
+            <td class="px-4 py-2 text-gray-600">{{ ingredient.unit.short|default:ingredient.unit.name }}</td>
             <td class="px-4 py-2 text-right font-medium text-[#A36E33]">{{ ingredient.quantity|floatformat:2 }}</td>
           </tr>
           {% empty %}

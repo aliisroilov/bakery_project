@@ -34,7 +34,8 @@ def viewer_dashboard(request):
         return HttpResponseForbidden("You are not allowed to view this page.")
 
     today = timezone.now().date()
-    orders = Order.objects.filter(created_at__date=today)
+    # Filter by order_date instead of created_at
+    orders = Order.objects.filter(order_date=today)
 
     stats = {
         "today_orders": orders.count(),
@@ -54,7 +55,6 @@ def viewer_dashboard(request):
         date__date=today, payment_type="collection"
     ).aggregate(total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField()))["total"] or Decimal(0)
 
-    # ✅ Unified Bakery Balance
     bakery_balance = BakeryBalance.get_instance().amount
 
     context = {
@@ -72,7 +72,7 @@ def viewer_dashboard(request):
 def dashboard_view(request):
     """Full dashboard with financial summaries."""
     today = timezone.now().date()
-    orders = Order.objects.filter(created_at__date=today)
+    orders = Order.objects.filter(order_date=today)
 
     stats = {
         "today_orders": orders.count(),
@@ -96,7 +96,6 @@ def dashboard_view(request):
         date__date=today, payment_type="repayment"
     ).aggregate(total=Coalesce(Sum("amount"), Value(0), output_field=DecimalField()))["total"] or Decimal(0)
 
-    # ✅ Unified Bakery Balance — always correct and synced via signals
     bakery_balance = BakeryBalance.get_instance().amount
 
     context = {
@@ -121,7 +120,7 @@ def districts_view(request):
 
     district_list = []
     for district in districts:
-        orders = Order.objects.filter(shop__region=district, created_at__date=today)
+        orders = Order.objects.filter(shop__region=district, order_date=today)
         district_list.append({
             "district": district,
             "total": orders.count(),
@@ -142,13 +141,14 @@ def district_detail_view(request, district_id):
     today = timezone.now().date()
 
     orders = Order.objects.filter(
-        shop__region=district, created_at__date=today
+        shop__region=district, order_date=today
     ).order_by("shop__name")
 
     shop_loans = {}
     shops_in_orders = set(order.shop for order in orders)
     for shop in shops_in_orders:
-        past_orders = shop.orders.exclude(created_at__date=today)
+        # planned_loan still sums all past orders (all dates)
+        past_orders = shop.orders.exclude(id__in=[o.id for o in orders])
         planned_loan = sum(
             item.total_price for o in past_orders for item in o.items.all()
         )
@@ -190,8 +190,6 @@ def loan_repayment_view(request):
                 collected_by=request.user,
                 notes="Loan repayment via form"
             )
-
-            # ✅ BakeryBalance auto-updated via signals (no manual update needed)
 
             messages.success(request, f"{shop.name} uchun {amount} so‘m qarz to‘landi.")
             return redirect("loan_repayment")

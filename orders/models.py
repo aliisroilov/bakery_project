@@ -1,7 +1,7 @@
 from django.db import models
 from shops.models import Shop
 from products.models import Product
-
+from django.utils import timezone
 
 class Order(models.Model):
     STATUS_CHOICES = [
@@ -12,6 +12,7 @@ class Order(models.Model):
 
     shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name="orders")
     created_at = models.DateTimeField(auto_now_add=True)
+    order_date = models.DateField(default=timezone.now)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default="Pending")
     
     def __str__(self):

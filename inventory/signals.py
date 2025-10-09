@@ -5,35 +5,84 @@ from reports.models import BakeryBalance
 from .models import Purchase
 from dashboard.models import LoanRepayment
 
-# ---------------- PURCHASE ----------------
+
+# ========================
+# 💰 BALANCE UPDATES
+# ========================
+
 @receiver(post_save, sender=Purchase)
 def decrease_balance_on_purchase(sender, instance, created, **kwargs):
-    """Subtract purchase amount from BakeryBalance when a purchase is created."""
+    """
+    Subtract the total purchase cost from BakeryBalance when a Purchase is created.
+    """
     if created and instance.price:
-        balance = BakeryBalance.get_instance()  # returns model instance
+        balance = BakeryBalance.get_instance()
         balance.amount -= Decimal(instance.price)
         balance.save(update_fields=["amount"])
 
+
 @receiver(post_delete, sender=Purchase)
 def restore_balance_on_purchase_delete(sender, instance, **kwargs):
-    """Restore balance when a purchase is deleted."""
+    """
+    Add back the purchase cost to BakeryBalance when the Purchase is deleted.
+    """
     if instance.price:
         balance = BakeryBalance.get_instance()
         balance.amount += Decimal(instance.price)
         balance.save(update_fields=["amount"])
 
-# ---------------- LOAN REPAYMENT ----------------
+
 @receiver(post_save, sender=LoanRepayment)
 def update_balance_on_loan(sender, instance, created, **kwargs):
-    """Add repayment amount to BakeryBalance."""
-    if created:
+    """
+    Add repayment amount to BakeryBalance when a loan is repaid.
+    """
+    if created and instance.amount:
         balance = BakeryBalance.get_instance()
         balance.amount += Decimal(instance.amount)
         balance.save(update_fields=["amount"])
 
+
 @receiver(post_delete, sender=LoanRepayment)
 def restore_balance_on_loan_delete(sender, instance, **kwargs):
-    """Subtract repayment amount if LoanRepayment is deleted."""
-    balance = BakeryBalance.get_instance()
-    balance.amount -= Decimal(instance.amount)
-    balance.save(update_fields=["amount"])
+    """
+    Subtract repayment amount if a LoanRepayment record is deleted.
+    """
+    if instance.amount:
+        balance = BakeryBalance.get_instance()
+        balance.amount -= Decimal(instance.amount)
+        balance.save(update_fields=["amount"])
+
+
+# ========================
+# 📦 INVENTORY STOCK UPDATES
+# ========================
+
+@receiver(post_save, sender=Purchase)
+def handle_purchase_creation(sender, instance, created, **kwargs):
+    """Handles both ingredient stock and bakery balance"""
+    if created:
+        # Update stock
+        ing = instance.ingredient
+        ing.quantity += instance.quantity
+        ing.save(update_fields=["quantity"])
+
+        # Update bakery balance
+        if instance.price:
+            balance = BakeryBalance.get_instance()
+            balance.amount -= Decimal(instance.price)
+            balance.save(update_fields=["amount"])
+
+@receiver(post_delete, sender=Purchase)
+def handle_purchase_deletion(sender, instance, **kwargs):
+    """Revert stock and balance on delete"""
+    # Revert stock
+    ing = instance.ingredient
+    ing.quantity -= instance.quantity
+    ing.save(update_fields=["quantity"])
+
+    # Revert bakery balance
+    if instance.price:
+        balance = BakeryBalance.get_instance()
+        balance.amount += Decimal(instance.price)
+        balance.save(update_fields=["amount"])
