@@ -14,7 +14,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'bakery_db',
         'USER': 'bakery_user',
-        'PASSWORD': 'your_secure_password',
+        'PASSWORD': '0270',
         'HOST': 'localhost',
         'PORT': '5432',
     }
