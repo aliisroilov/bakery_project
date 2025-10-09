@@ -9,17 +9,16 @@ import dj_database_url        # pip install dj-database-url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-if os.getenv("DATABASE_URL"):
-    DATABASES = {
-        "default": dj_database_url.config(conn_max_age=600, ssl_require=True)
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'bakery_db',
+        'USER': 'bakery_user',
+        'PASSWORD': 'your_secure_password',
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+}
 
 # =========================
 # Core Settings
