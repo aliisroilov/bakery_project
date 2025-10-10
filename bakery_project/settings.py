@@ -12,8 +12,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'bakery_db',
-        'USER': 'bakery_user',
+        'NAME': 'bakeryy_db',
+        'USER': 'bakeryy_user',
         'PASSWORD': '0270',
         'HOST': 'localhost',
         'PORT': '5432',
