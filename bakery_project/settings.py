@@ -12,11 +12,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'bakery_db',
-        'USER': 'bakuser',
-        'PASSWORD': '0270',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': os.environ.get('POSTGRES_DB', 'bakery_db'),
+        'USER': os.environ.get('POSTGRES_USER', 'bakuser'),
+        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', '0270'),
+        'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
+        'PORT': os.environ.get('POSTGRES_PORT', ''),
     }
 }
 
@@ -25,7 +25,7 @@ DATABASES = {
 # =========================
 SECRET_KEY = config('SECRET_KEY', default='unsafe-secret-key-for-testing')
 DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = ['sutli-non.uz', 'www.sutli-non.uz']  # For testing on Heroku
+ALLOWED_HOSTS = ['sutli-non.uz', 'www.sutli-non.uz', '217.76.51.229']  # For testing on Heroku
 
 # =========================
 # Applications
