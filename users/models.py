@@ -7,6 +7,7 @@ class User(AbstractUser):
         ("manager", "Manager"),
         ("driver", "Driver"),
         ("viewer", "Viewer"),
+        ("nonvoy", "Nonvoy")
     ]
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="manager")
