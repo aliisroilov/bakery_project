@@ -9,4 +9,5 @@ urlpatterns = [
     path("dashboard/", include("dashboard.urls")),
     path("reports/", include("reports.urls", namespace="reports")),  # reports app
     path('inventory/', include('inventory.urls', namespace='inventory')),
+    path("salary/", include("salary.urls", namespace="salary")),
 ]

@@ -37,30 +37,37 @@
         </p>
 
         <!-- Action buttons -->
-        {% if order.status == 'Partially Delivered' %}
-            {% if request.user.role == 'manager' or request.user.is_superuser %}
-                <div class="mt-4 flex flex-col gap-2">
-                    <a href="{% url 'mark_fully_delivered' order.id %}" 
-                       class="w-full inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
-                        To'liq Yetkazildi
-                    </a>
+         <!-- Action buttons -->
+        {% if order.status != 'Delivered' %}
+            {% if order.status == 'Partially Delivered' %}
+                {% if request.user.role == 'manager' or request.user.is_superuser %}
+                    <div class="mt-4 flex flex-col gap-2">
+                        <a href="{% url 'mark_fully_delivered' order.id %}" 
+                           class="w-full inline-block bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                            To‘liq Yetkazildi
+                        </a>
+                        <a href="{% url 'confirm_delivery' order.id %}" 
+                           class="w-full inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                            Tasdiqlash
+                        </a>
+                    </div>
+                {% elif request.user.role == 'driver' %}
                     <a href="{% url 'confirm_delivery' order.id %}" 
-                       class="w-full inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                       class="mt-4 inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
                         Tasdiqlash
                     </a>
-                </div>
-            {% elif request.user.role == 'driver' %}
-                <a href="{% url 'confirm_delivery' order.id %}" 
-                   class="mt-4 inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
-                    Tasdiqlash
-                </a>
+                {% endif %}
+            {% else %}
+                {# For Pending or any non-delivered state #}
+                {% if request.user.role == 'manager' or request.user.role == 'driver' or request.user.is_superuser %}
+                    <a href="{% url 'confirm_delivery' order.id %}" 
+                       class="mt-4 inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
+                        Tasdiqlash
+                    </a>
+                {% endif %}
             {% endif %}
-        {% elif request.user.role == 'driver' %}
-            <a href="{% url 'confirm_delivery' order.id %}" 
-               class="mt-4 inline-block bg-primary hover:bg-secondary text-white font-bold py-2 px-4 rounded-lg transition duration-300">
-                Tasdiqlash
-            </a>
         {% endif %}
+
     </div>
 </div>
 

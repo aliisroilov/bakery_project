@@ -6,6 +6,7 @@ from dashboard.models import Payment
 from datetime import datetime, timedelta, time
 from django.utils import timezone
 from zoneinfo import ZoneInfo
+from decimal import Decimal
 
 def order_detail(request, order_id):
     """
@@ -68,22 +69,39 @@ def confirm_delivery(request, order_id):
     })
 
 
+
 def mark_fully_delivered(request, order_id):
+    """
+    Marks an order as fully completed (yopilgan), 
+    keeping already delivered quantities as final.
+    Does NOT change delivered quantities.
+    """
     order = get_object_or_404(Order, id=order_id)
 
-    # Only allow partially delivered orders
-    if order.status != "Partially Delivered":
-        return redirect('order_detail', order_id=order.id)
+    # ✅ Calculate total based on already delivered quantities
+    total_delivered = sum(
+        Decimal(item.delivered_quantity) * Decimal(item.unit_price)
+        for item in order.items.all()
+    )
 
-    # Update all items delivered quantity to planned quantity
-    for item in order.items.all():
-        item.delivered_quantity = item.quantity
-        item.save()
+    # ✅ Calculate total paid for this order
+    total_paid = sum(p.amount for p in Payment.objects.filter(order=order))
 
-    # Update order status to delivered
+    # ✅ Remaining debt = delivered - paid
+    remaining = total_delivered - total_paid
+    if remaining < 0:
+        remaining = Decimal(0)
+
+    # ✅ Update order and shop loan
     order.status = "Delivered"
-    order.save()
+    order.save(update_fields=["status"])
 
-    return redirect('order_detail', order_id=order.id)
+    order.shop.loan_balance += remaining
+    order.shop.save(update_fields=["loan_balance"])
 
+    messages.success(
+        request,
+        f"{order.shop.name} uchun buyurtma yopildi (To‘liq yetkazilgan deb belgilandi)."
+    )
 
+    return redirect("order_detail", order_id=order.id)

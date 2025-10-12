@@ -20,10 +20,14 @@ class Unit(models.Model):
 
 
 class Ingredient(models.Model):
-    """Ingredient with current quantity and measurement unit"""
     name = models.CharField(max_length=200, unique=True)
     quantity = models.DecimalField(**DECIMAL_KWARGS, default=Decimal('0'))
     unit = models.ForeignKey(Unit, on_delete=models.PROTECT, related_name='ingredients')
+    low_stock_threshold = models.DecimalField(
+        **DECIMAL_KWARGS,
+        default=Decimal('0'),
+        help_text=_("Minimum quantity before alert (set by admin)")
+    )
 
     class Meta:
         verbose_name = _("Ingredient")
@@ -31,6 +35,13 @@ class Ingredient(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.quantity} {self.unit})"
+
+    @property
+    def is_low_stock(self):
+        """Returns True if quantity is below or equal to threshold."""
+        if self.low_stock_threshold is None:
+            return False
+        return self.quantity <= self.low_stock_threshold
 
 
 class Purchase(models.Model):

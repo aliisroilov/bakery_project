@@ -7,9 +7,15 @@ class UnitAdmin(admin.ModelAdmin):
 
 @admin.register(Ingredient)
 class IngredientAdmin(admin.ModelAdmin):
-    list_display = ('name', 'quantity', 'unit')
+    list_display = ('name', 'quantity', 'unit', 'low_stock_threshold', 'is_low_stock_display')
+    list_filter = ('unit',)
     search_fields = ('name',)
 
+    @admin.display(boolean=True, description="Low stock?")
+    def is_low_stock_display(self, obj):
+        return obj.quantity <= obj.low_stock_threshold
+    
+    
 @admin.register(Purchase)
 class PurchaseAdmin(admin.ModelAdmin):
     list_display = ('ingredient', 'quantity', 'price', 'date')

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block content %}
+<div class="max-w-xl mx-auto mt-10 bg-white shadow-2xl rounded-2xl border border-gray-100 p-10">
+
+  <!-- Header -->
+  <div class="mb-8 text-center">
+    <h1 class="text-3xl font-bold text-gray-800">Toʻlov / Avans berish</h1>
+    <p class="text-gray-500 mt-1">
+      Xodim: <span class="font-semibold text-gray-800">{{ employee.get_full_name|default:employee.username }}</span>
+    </p>
+  </div>
+
+  <!-- Form -->
+  <form method="post" class="space-y-6">
+    {% csrf_token %}
+
+    {% for field in form %}
+      <div>
+        <label for="{{ field.id_for_label }}" class="block text-lg font-medium text-gray-700 mb-2">
+          {{ field.label }}
+        </label>
+        <div class="relative">
+          {{ field }}
+        </div>
+        {% if field.errors %}
+          <p class="text-red-600 text-sm mt-1">{{ field.errors.0 }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+
+    <!-- Submit button -->
+    <div class="pt-4 flex justify-end">
+      <button type="submit"
+        class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-md transition duration-200 focus:ring-2 focus:ring-blue-400 focus:outline-none">
+        Toʻlovni amalga oshirish
+      </button>
+    </div>
+  </form>
+</div>
+
+<!-- Extra CSS to style Django form inputs -->
+<style>
+  input, textarea, select {
+    width: 100%;
+    border: 2px solid #e5e7eb; /* gray-200 */
+    border-radius: 0.75rem;
+    padding: 0.75rem 1rem;
+    font-size: 1.05rem;
+    transition: all 0.2s ease;
+  }
+  input:focus, textarea:focus, select:focus {
+    border-color: #2563eb; /* blue-600 */
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+    outline: none;
+  }
+</style>
+{% endblock %}

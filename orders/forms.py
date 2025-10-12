@@ -14,12 +14,11 @@ class ConfirmDeliveryForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.order = order
 
-        # Fields for each order item delivered qty
+        # Fields for each order item delivered qty (no delivery limit)
         for item in order.items.all():
             self.fields[f"delivered_{item.id}"] = forms.IntegerField(
                 label=f"{item.product.name} yetkazilgan",
                 min_value=0,
-                max_value=item.quantity,
                 initial=item.delivered_quantity or 0,
                 required=True
             )
@@ -78,6 +77,7 @@ class ConfirmDeliveryForm(forms.Form):
             Decimal(i.delivered_quantity) * Decimal(i.unit_price)
             for i in self.order.items.all()
         )
+
         # Remaining debt = delivered - received
         remaining = delivered_total - received
         if remaining < 0:

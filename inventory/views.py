@@ -9,15 +9,29 @@ from decimal import Decimal
 
 
 def inventory_dashboard(request):
+    # All ingredients with their units
     ingredients = Ingredient.objects.select_related("unit").all().order_by("name")
+
+    # Latest purchases and productions — use "date" instead of "created_at"
     recent_purchases = Purchase.objects.select_related("ingredient").order_by("-date")[:5]
     recent_productions = Production.objects.select_related("product").order_by("-date")[:5]
 
-    return render(request, "inventory/dashboard.html", {
+    # Low stock detection
+    low_stock_ingredients = [
+        ing for ing in ingredients
+        if ing.quantity <= ing.low_stock_threshold
+    ]
+
+
+    context = {
         "ingredients": ingredients,
         "recent_purchases": recent_purchases,
         "recent_productions": recent_productions,
-    })
+        "low_stock_ingredients": low_stock_ingredients,
+    }
+
+    return render(request, "inventory/dashboard.html", context)
+
 
 
 # 🧂 Ingredient List + Create

@@ -4,7 +4,7 @@
 {% block content %}
 <div class="min-h-screen bg-gradient-to-br from-[#FAF8F5] via-[#FFFDF8] to-[#F6C87B]/10 py-10 px-6">
 
-  <!-- Header -->
+  <!-- 🏷️ Header -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-10">
     <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] drop-shadow-sm mb-4 sm:mb-0">
       Ombor Boshqaruvi
@@ -21,12 +21,42 @@
     </div>
   </div>
 
-  <!-- Recent Activity -->
+  <!-- ⚠️ Low Stock Section -->
+  {% if low_stock_ingredients %}
+  <div class="bg-red-50/90 backdrop-blur-md rounded-3xl shadow-lg border border-red-300 mb-12 p-6">
+    <h2 class="text-2xl font-bold text-red-700 mb-4 flex items-center gap-2">
+      ⚠️ Past Zaxiradagi Mahsulotlar
+    </h2>
+    <div class="overflow-x-auto rounded-xl border border-red-200">
+      <table class="w-full text-sm text-left text-gray-700">
+        <thead class="bg-red-100 text-red-800 uppercase text-xs">
+          <tr>
+            <th class="px-4 py-3">Mahsulot</th>
+            <th class="px-4 py-3 text-right">Joriy Miqdor</th>
+            <th class="px-4 py-3 text-right">Minimal Zaxira</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ing in low_stock_ingredients %}
+          <tr class="border-b border-red-100 hover:bg-red-50 transition-all">
+            <td class="px-4 py-2 font-medium">{{ ing.name }}</td>
+            <td class="px-4 py-2 text-right text-red-700 font-semibold">{{ ing.quantity|floatformat:2 }}</td>
+            <td class="px-4 py-2 text-right text-gray-600">{{ ing.low_stock_threshold|floatformat:2 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- 📦 Recent Activity -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
-    <!-- Purchases -->
+
+    <!-- 🛒 Purchases -->
     <div class="bg-white/80 backdrop-blur-lg rounded-3xl shadow-lg border border-[#F6C87B]/40 hover:border-[#E6B566]/70 transition-all p-6">
       <div class="flex justify-between items-center mb-5">
-        <h2 class="text-2xl font-bold text-[#B67B3F] flex items-center gap-2">So‘nggi Xaridlar</h2>
+        <h2 class="text-2xl font-bold text-[#B67B3F]">So‘nggi Xaridlar</h2>
         <a href="{% url 'inventory:purchase_list' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko‘rish</a>
       </div>
 
@@ -44,23 +74,21 @@
             <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
               <td class="px-4 py-2 font-medium">{{ purchase.ingredient.name }}</td>
               <td class="px-4 py-2 text-right text-[#A36E33] font-semibold">+{{ purchase.quantity|floatformat:2 }}</td>
-              <td class="px-4 py-2 text-right text-gray-500">{{ purchase.created_at|date:"d M Y" }}</td>
+              <td class="px-4 py-2 text-right text-gray-500">{{ purchase.date|date:"d M Y" }}</td>
             </tr>
             {% empty %}
-            <tr>
-              <td colspan="3" class="text-center py-4 text-gray-400">Xaridlar mavjud emas.</td>
-            </tr>
+            <tr><td colspan="3" class="text-center py-4 text-gray-400">Xaridlar mavjud emas.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
 
-    <!-- Productions -->
+    <!-- 🏭 Productions -->
     <div class="bg-white/80 backdrop-blur-lg rounded-3xl shadow-lg border border-[#D9D3D0]/60 hover:border-[#B67B3F]/60 transition-all p-6">
       <div class="flex justify-between items-center mb-5">
-        <h2 class="text-2xl font-bold text-[#A36E33] flex items-center gap-2">So‘nggi buyurtmalar</h2>
-        <a href="{% url 'inventory:production_history' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko'rish</a>
+        <h2 class="text-2xl font-bold text-[#A36E33]">So‘nggi Ishlab Chiqarish</h2>
+        <a href="{% url 'inventory:production_history' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko‘rish</a>
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-[#E6B566]/40">
@@ -80,9 +108,7 @@
               <td class="px-4 py-2 text-right text-gray-500">{{ production.date|date:"d M Y" }}</td>
             </tr>
             {% empty %}
-            <tr>
-              <td colspan="3" class="text-center py-4 text-gray-400">Buyurtmalar yo‘q.</td>
-            </tr>
+            <tr><td colspan="3" class="text-center py-4 text-gray-400">Ishlab chiqarishlar yo‘q.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -90,14 +116,11 @@
     </div>
   </div>
 
-  <!-- Ingredients Overview -->
+  <!-- 🧂 Ingredient Overview -->
   <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8">
-    <div class="flex justify-between items-center mb-5">
-      <h2 class="text-2xl font-bold text-[#8A6233] flex items-center gap-2">Ombordagi Mahsulotlar</h2>
-    </div>
-
-    <div class="overflow-x-auto rounded-xl border border-[#E6B566]/30">
-      <table class="w-full text-sm text-left text-gray-700">
+    <h2 class="text-2xl font-bold text-[#8A6233] mb-5">Ombordagi Mahsulotlar</h2>
+    <div class="rounded-xl border border-[#E6B566]/30 overflow-hidden">
+      <table class="w-full table-auto text-sm text-left text-gray-700">
         <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
           <tr>
             <th class="px-4 py-3">Mahsulot</th>
@@ -107,15 +130,15 @@
         </thead>
         <tbody>
           {% for ingredient in ingredients %}
-          <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
-            <td class="px-4 py-2 font-semibold text-gray-800">{{ ingredient.name }}</td>
+          <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all {% if ingredient.is_low_stock %}bg-red-50{% endif %}">
+            <td class="px-4 py-2 font-semibold text-gray-800 truncate max-w-[100px] sm:max-w-[150px]">{{ ingredient.name }}</td>
             <td class="px-4 py-2 text-gray-600">{{ ingredient.unit.short|default:ingredient.unit.name }}</td>
-            <td class="px-4 py-2 text-right font-medium text-[#A36E33]">{{ ingredient.quantity|floatformat:2 }}</td>
+            <td class="px-4 py-2 text-right font-medium {% if ingredient.is_low_stock %}text-red-600{% else %}text-[#A36E33]{% endif %}">
+              {{ ingredient.quantity|floatformat:2 }}
+            </td>
           </tr>
           {% empty %}
-          <tr>
-            <td colspan="3" class="text-center py-4 text-gray-400">Mahsulotlar topilmadi.</td>
-          </tr>
+          <tr><td colspan="3" class="text-center py-4 text-gray-400">Mahsulotlar topilmadi.</td></tr>
           {% endfor %}
         </tbody>
       </table>

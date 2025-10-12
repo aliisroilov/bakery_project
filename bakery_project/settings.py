@@ -9,23 +9,28 @@ import dj_database_url        # pip install dj-database-url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.environ.get('POSTGRES_DB', 'bakery_db'),
+#         'USER': os.environ.get('POSTGRES_USER', 'bakuser'),
+#         'PASSWORD': os.environ.get('POSTGRES_PASSWORD', '0270'),
+#         'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
+#         'PORT': os.environ.get('POSTGRES_PORT', ''),
+#     }
+# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('POSTGRES_DB', 'bakery_db'),
-        'USER': os.environ.get('POSTGRES_USER', 'bakuser'),
-        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', '0270'),
-        'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
-        'PORT': os.environ.get('POSTGRES_PORT', ''),
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
-
 # =========================
 # Core Settings
 # =========================
 SECRET_KEY = config('SECRET_KEY', default='unsafe-secret-key-for-testing')
 DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = ['sutli-non.uz', 'www.sutli-non.uz', '217.76.51.229']  # For testing on Heroku
+# ALLOWED_HOSTS = ['sutli-non.uz', 'www.sutli-non.uz', '217.76.51.229']  # For testing on Heroku
 
 # =========================
 # Applications
@@ -47,6 +52,7 @@ INSTALLED_APPS = [
     'reports',
     'widget_tweaks',
     'inventory',
+    'salary',
 ]
 
 AUTH_USER_MODEL = "users.User"

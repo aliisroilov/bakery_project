@@ -7,6 +7,7 @@ from .forms import CategoryForm, PurchaseForm
 from orders.models import OrderItem
 from .models import Purchase, Category, BakeryBalance
 from dashboard.models import LoanRepayment, Payment
+from salary.models import SalaryPayment
 from shops.models import Shop
 from decimal import Decimal
  # add BakeryBalance
@@ -194,87 +195,101 @@ def all_reports(request):
     start_date = request.GET.get("start_date")
     end_date = request.GET.get("end_date")
 
-    # Ma'lumotlarni olish
+    # Base querysets
     purchases = Purchase.objects.all()
     repayments = LoanRepayment.objects.all()
     payments = Payment.objects.filter(payment_type="collection")
+    delivered_items = (
+        OrderItem.objects
+        .select_related("order", "product", "order__shop")
+        .filter(order__status__in=["Delivered", "confirmed"])
+    )
+    salary_payments = SalaryPayment.objects.all()
 
-    # Faqat tasdiqlangan yoki yetkazilgan buyurtmalarni olish
-    delivered_items = OrderItem.objects.select_related("order", "product", "order__shop") \
-                                       .filter(order__status__in=["Delivered", "confirmed"])
-
-    # Sana bo‘yicha filtrlash
+    # Apply date filters
     if start_date:
         purchases = purchases.filter(purchase_date__gte=start_date)
         repayments = repayments.filter(date__gte=start_date)
         payments = payments.filter(date__gte=start_date)
         delivered_items = delivered_items.filter(order__created_at__date__gte=start_date)
+        salary_payments = salary_payments.filter(created_at__date__gte=start_date)
 
     if end_date:
         purchases = purchases.filter(purchase_date__lte=end_date)
         repayments = repayments.filter(date__lte=end_date)
         payments = payments.filter(date__lte=end_date)
         delivered_items = delivered_items.filter(order__created_at__date__lte=end_date)
+        salary_payments = salary_payments.filter(created_at__date__lte=end_date)
 
-    # Barcha hisobot yozuvlarini jamlash
+    # Collect all reports
     reports = []
 
-    # === Xaridlar (Purchases) ===
+    # 1️⃣ Purchases
     for p in purchases:
         reports.append({
             "date": p.purchase_date,
-            "category": "Xarid",
-            "description": p.notes or p.item_name or "Mahsulot xaridi",
+            "category": "Xarid (Purchase)",
+            "description": p.notes or getattr(p, "item_name", "Mahsulot xaridi"),
             "counterparty": "-",
             "income": None,
-            "expense": p.unit_price or Decimal("0")
+            "expense": p.unit_price or Decimal("0"),
         })
 
-    # === Qarz to‘lovlari (Loan repayments) ===
+    # 2️⃣ Loan repayments
     for r in repayments:
         reports.append({
             "date": r.date,
-            "category": "Qarz to‘lovi",
+            "category": "Qarz to‘lovi (Loan Repayment)",
             "description": f"{r.shop.name} dan to‘lov",
             "counterparty": r.shop.name,
             "income": r.amount or Decimal("0"),
-            "expense": None
+            "expense": None,
         })
 
-    # === To‘lov yig‘imlari (Payment collections) ===
+    # 3️⃣ Payment collections
     for pay in payments:
         reports.append({
             "date": pay.date,
-            "category": "To‘lov yig‘imi",
+            "category": "To‘lov yig‘imi (Payment Collection)",
             "description": f"{pay.shop.name} dan to‘lov",
             "counterparty": pay.shop.name,
             "income": pay.amount or Decimal("0"),
-            "expense": None
+            "expense": None,
         })
 
-    # === Sotuvlar (Sales) — faqat tasdiqlangan buyurtmalardan ===
+    # 4️⃣ Sales (Delivered)
     for item in delivered_items:
         reports.append({
             "date": item.order.created_at.date() if isinstance(item.order.created_at, datetime) else item.order.created_at,
-            "category": "Sotuv",
-            "description": f"{item.product.name} x {item.delivered_quantity}",
+            "category": "Sotuv (Sale)",
+            "description": f"{item.product.name} × {item.delivered_quantity}",
             "counterparty": item.order.shop.name,
             "income": item.unit_price * item.delivered_quantity,
-            "expense": None
+            "expense": None,
         })
 
-    # Sana formatlarini bir xil qilish
+    # 5️⃣ Salary / Advance Payments
+    for s in salary_payments:
+        reports.append({
+            "date": s.created_at.date(),
+            "category": "Ish haqi (Salary / Advance)",
+            "description": s.note or f"{s.user.get_full_name() if hasattr(s.user, 'get_full_name') else s.user.username} oylik",
+            "counterparty": s.user.username,
+            "income": None,
+            "expense": s.amount,
+        })
+
+    # Normalize dates
     for r in reports:
         if isinstance(r["date"], datetime):
             r["date"] = r["date"].date()
 
-    # Sana bo‘yicha tartiblash
-    reports.sort(key=lambda x: x["date"])
+    # Sort by date
+    reports.sort(key=lambda x: x["date"], reverse=True)
 
-    # Hozirgi balansni olish
+    # Current bakery balance
     current_balance = BakeryBalance.get_instance().amount
 
-    # Hisobot sahifasini qaytarish
     return render(request, "reports/all_reports.html", {
         "reports": reports,
         "current_balance": current_balance,

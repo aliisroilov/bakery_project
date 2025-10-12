@@ -1,153 +1,249 @@
 <!DOCTYPE html>
 <html lang="uz">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}Bakery Management{% endblock %}</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Bakery Management{% endblock %}</title>
 
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.12.0/dist/cdn.min.js" defer></script>
 
-    <!-- Alpine.js -->
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.12.0/dist/cdn.min.js" defer></script>
+  <style>
+    /* --- Colors --- */
+    .bg-primary { background-color: #b5793b; }
+    .bg-primary-dark { background-color: #dcc38b; }
+    .text-primary { color: #bea087; }
+    .text-primary-dark { color: #dcc38b; }
+    .hover-bg-primary-dark:hover { background-color: #dcc38b; }
 
-    <style>
-        /* --- Custom color theme --- */
-        .bg-primary { background-color: #b5793b; }
-        .bg-primary-dark { background-color: #dcc38b; }
-        .text-primary { color: #bea087; }
-        .text-primary-dark { color: #dcc38b; }
-        .hover-bg-primary-dark:hover { background-color: #dcc38b; }
+    html { scroll-behavior: smooth; }
+    html, body { max-width: 100%; overflow-x: hidden; }
+    body { padding-top: 64px; }
 
-        /* Smooth scrolling for anchor links */
-        html {
-            scroll-behavior: smooth;
-        }
+    /* ---------- Navbar ---------- */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(6px);
+      transition: transform 0.28s cubic-bezier(.2,.9,.2,1), box-shadow 0.2s;
+      z-index: 1100;
+      will-change: transform;
+    }
+    nav.hide { transform: translateY(-110%); }
 
-        /* Prevent horizontal scrollbars */
-        html, body {
-            max-width: 100%;
-            overflow-x: hidden;
-        }
+    /* ---------- Mobile menu (slides from top) ---------- */
+    #mobile-menu {
+      position: fixed;
+      top: -100%;
+      left: 0;
+      right: 0;
+      z-index: 1200;
+      background: white;
+      padding: 12px 8px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+      opacity: 0;
+      transform: translateY(-6px);
+      transition: top 0.3s ease, opacity 0.25s ease, transform 0.25s ease;
+    }
+    #mobile-menu.show {
+      top: 64px; /* below navbar */
+      opacity: 1;
+      transform: translateY(0);
+    }
+    #mobile-menu a { display:block; padding:8px 12px; border-radius:6px; color:#333; text-decoration:none; }
+    #mobile-menu a:hover { background:#f3f4f6; color:#111; }
 
-        /* Fix navbar */
-        nav {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-        }
+    /* ---------- Back button ---------- */
+    .back-button {
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      z-index: 1000;
+    }
+  </style>
 
-        /* Add padding to prevent content from hiding under navbar */
-        body {
-            padding-top: 64px;
-        }
-    </style>
-
-    {% block extra_css %}{% endblock %}
+  {% block extra_css %}{% endblock %}
 </head>
 <body class="bg-gray-100 font-sans text-gray-800">
 
-    <!-- Navbar -->
-    <nav class="bg-white shadow-md z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between h-16 items-center">
-                <!-- Left -->
-                <div class="flex items-center space-x-4">
-                    <a href="{% url 'dashboard' %}" class="text-primary text-xl font-bold whitespace-nowrap">Bakery</a>
-
-                    <div class="hidden md:flex space-x-4">
-                        {% if request.user.role == 'viewer' %}
-                            <a href="{% url 'viewer_dashboard' %}" class="text-gray-700 hover-text-primary-dark">Dashboard</a>
-                        {% else %}
-                            <a href="{% url 'dashboard' %}" class="text-gray-700 hover-text-primary-dark">Dashboard</a>
-                        {% endif %}
-                        {% if request.user.role == 'manager' or request.user.is_superuser or request.user.role == 'driver' %}
-                            <a href="{% url 'districts' %}" class="text-gray-700 hover-text-primary-dark">Регионы</a>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <!-- Right -->
-                <div class="flex items-center space-x-3">
-                    <span class="hidden md:block text-gray-600 truncate">{{ request.user.username }}</span>
-                    <a href="{% url 'logout' %}" class="bg-primary hover-bg-primary-dark text-white px-4 py-2 rounded-lg transition whitespace-nowrap">Chiqish</a>
-
-                    <!-- Mobile burger -->
-                    <button id="menu-toggle" class="lg:hidden bg-primary text-white px-3 py-2 rounded hover-bg-primary-dark focus:outline-none">
-                        ☰
-                    </button>
-                </div>
-            </div>
-        </div>
-    </nav>
-
-    <!-- Main container -->
-    <div class="max-w-7xl mx-auto mt-6 px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row gap-6 items-start">
-
-        <!-- Sidebar -->
-        <aside id="sidebar"
-               class="hidden lg:flex flex-col flex-shrink-0 w-full lg:w-64 bg-white shadow-lg rounded-lg p-4 space-y-2 transition-all duration-300 ease-in-out">
-            <h2 class="text-lg font-bold text-primary mb-4">Menyu</h2>
-
+  <!-- Navbar -->
+  <nav id="navbar" class="bg-white shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between h-16 items-center">
+        <div class="flex items-center space-x-4">
+          <a href="{% url 'dashboard' %}" class="text-primary text-xl font-bold whitespace-nowrap">Bakery</a>
+          <div class="hidden md:flex space-x-4">
             {% if request.user.role == 'viewer' %}
-                <a href="{% url 'viewer_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Dashboard</a>
+              <a href="{% url 'viewer_dashboard' %}" class="text-gray-700 hover-text-primary-dark">Dashboard</a>
             {% else %}
-                <a href="{% url 'dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Dashboard</a>
+              <a href="{% url 'dashboard' %}" class="text-gray-700 hover-text-primary-dark">Dashboard</a>
             {% endif %}
+            {% if request.user.role == 'manager' or request.user.is_superuser or request.user.role == 'driver' %}
+              <a href="{% url 'districts' %}" class="text-gray-700 hover-text-primary-dark">Регионы</a>
+            {% endif %}
+          </div>
+        </div>
 
-            {% if request.user.role == 'manager' or request.user.is_superuser %}
-                <a href="{% url 'districts' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hududlar</a>
-                <a href="{% url 'loan_repayment' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Kirim</a>
-                <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
-                <a href="{% url 'inventory:inventory_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Ombor</a>
-                <a href="{% url 'admin:index' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Admin Panel</a>
-            {% elif request.user.role == 'driver' %}
-                <a href="{% url 'districts' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hududlar</a>
-            {% elif request.user.role == 'viewer' %}
-                <a href="{% url 'inventory:inventory_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Ombor</a>
-                <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
-            {% endif %}
-        </aside>
-
-        <!-- Content area -->
-        <main class="flex-1 flex flex-col w-full overflow-hidden scroll-smooth">
-            {% if messages %}
-                <div class="mb-4">
-                    {% for message in messages %}
-                        <div class="p-4 rounded-lg mb-2 
-                            {% if message.tags == 'success' %}bg-green-100 text-green-700
-                            {% elif message.tags == 'error' %}bg-red-100 text-red-700
-                            {% else %}bg-gray-100 text-gray-700{% endif %}">
-                            {{ message }}
-                        </div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-            
-            {% block content %}{% endblock %}
-        </main>
+        <div class="flex items-center space-x-3">
+          <span class="hidden md:block text-gray-600 truncate">{{ request.user.username }}</span>
+          {% if request.resolver_match.url_name != 'login' %}
+            <a href="{% url 'logout' %}" class="bg-primary hover-bg-primary-dark text-white px-4 py-2 rounded-lg transition whitespace-nowrap">Chiqish</a>
+          {% endif %}
+          <button id="menu-toggle" aria-haspopup="true" aria-expanded="false"
+                  class="lg:hidden bg-primary text-white px-3 py-2 rounded hover-bg-primary-dark focus:outline-none">☰</button>
+        </div>
+      </div>
     </div>
+  </nav>
 
-    <!-- JS for sidebar toggle -->
-    <script>
-        const toggleBtn = document.getElementById("menu-toggle");
-        const sidebar = document.getElementById("sidebar");
+  <!-- Mobile menu -->
+  <div id="mobile-menu" role="menu" aria-hidden="true">
+    {% if request.user.role == 'viewer' %}
+      <a href="{% url 'viewer_dashboard' %}">Dashboard</a>
+    {% else %}
+      <a href="{% url 'dashboard' %}">Dashboard</a>
+    {% endif %}
 
-        toggleBtn.addEventListener("click", () => {
-            sidebar.classList.toggle("hidden");
+    {% if request.user.role == 'manager' or request.user.is_superuser or request.user.role == 'driver' %}
+      <a href="{% url 'districts' %}">Hududlar</a>
+      <a href="{% url 'loan_repayment' %}">Kirim</a>
+      <a href="{% url 'reports:reports_home' %}">Hisobotlar</a>
+      <a href="{% url 'inventory:inventory_dashboard' %}">Ombor</a>
+      <a href="{% url 'salary:employee_list' %}">Oyliklar</a>
+      {% if request.user.is_superuser or request.user.role == 'manager' %}
+        <a href="{% url 'admin:index' %}">Admin Panel</a>
+      {% endif %}
+    {% elif request.user.role == 'viewer' %}
+      <a href="{% url 'inventory:inventory_dashboard' %}">Ombor</a>
+      <a href="{% url 'salary:employee_list' %}">Oyliklar</a>
+      <a href="{% url 'reports:reports_home' %}">Hisobotlar</a>
+    {% endif %}
+  </div>
+
+  <!-- Page layout -->
+  <div class="max-w-7xl mx-auto mt-6 px-4 sm:px-6 lg:px-8 flex flex-col lg:flex-row gap-6 items-start">
+    <aside id="sidebar"
+      class="hidden lg:flex flex-col flex-shrink-0 w-full lg:w-64 bg-white shadow-lg rounded-lg p-4 space-y-2 transition-all duration-300 ease-in-out">
+      <h2 class="text-lg font-bold text-primary mb-4">Menyu</h2>
+      {% if request.user.role == 'viewer' %}
+        <a href="{% url 'viewer_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Dashboard</a>
+      {% else %}
+        <a href="{% url 'dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Dashboard</a>
+      {% endif %}
+
+      {% if request.user.role == 'manager' or request.user.is_superuser or request.user.role == 'driver' %}
+        <a href="{% url 'districts' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hududlar</a>
+        <a href="{% url 'loan_repayment' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Kirim</a>
+        <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
+        <a href="{% url 'inventory:inventory_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Ombor</a>
+        <a href="{% url 'salary:employee_list' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Oyliklar</a>
+        {% if request.user.is_superuser or request.user.role == 'manager' %}
+          <a href="{% url 'admin:index' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Admin Panel</a>
+        {% endif %}
+      {% elif request.user.role == 'viewer' %}
+        <a href="{% url 'inventory:inventory_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Ombor</a>
+        <a href="{% url 'salary:employee_list' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Oyliklar</a>
+        <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
+      {% endif %}
+    </aside>
+
+    <main class="flex-1 flex flex-col w-full overflow-hidden scroll-smooth">
+      {% if messages %}
+        <div class="mb-4">
+          {% for message in messages %}
+            <div class="p-4 rounded-lg mb-2 
+              {% if message.tags == 'success' %}bg-green-100 text-green-700
+              {% elif message.tags == 'error' %}bg-red-100 text-red-700
+              {% else %}bg-gray-100 text-gray-700{% endif %}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <!-- Back button -->
+  {% if request.resolver_match.url_name != 'dashboard' %}
+  <button onclick="history.back()" 
+    class="back-button bg-primary hover-bg-primary-dark text-white px-5 py-3 rounded-full shadow-lg transition flex items-center space-x-2">
+    <span>←</span>
+    <span class="hidden sm:inline">Orqaga</span>
+  </button>
+  {% endif %}
+
+  <!-- JS -->
+  <script>
+    const toggleBtn = document.getElementById("menu-toggle");
+    const mobileMenu = document.getElementById("mobile-menu");
+    const sidebar = document.getElementById("sidebar");
+    const navbar = document.getElementById("navbar");
+
+    // Mobile menu toggle (slide from top)
+    toggleBtn?.addEventListener("click", () => {
+      const willShow = !mobileMenu.classList.contains("show");
+      if (willShow) {
+        mobileMenu.classList.add("show");
+        mobileMenu.setAttribute("aria-hidden","false");
+        toggleBtn.setAttribute("aria-expanded","true");
+      } else {
+        mobileMenu.classList.remove("show");
+        mobileMenu.setAttribute("aria-hidden","true");
+        toggleBtn.setAttribute("aria-expanded","false");
+      }
+    });
+
+    // Close mobile menu on outside click or ESC
+    document.addEventListener("click", e => {
+      if (!mobileMenu.contains(e.target) && e.target !== toggleBtn) {
+        mobileMenu.classList.remove("show");
+        toggleBtn.setAttribute("aria-expanded","false");
+      }
+    });
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        mobileMenu.classList.remove("show");
+        toggleBtn.setAttribute("aria-expanded","false");
+      }
+    });
+
+    // Hide navbar on scroll (mobile only)
+    let lastScroll = window.scrollY || 0;
+    let ticking = false;
+    const threshold = 20;
+    window.addEventListener("scroll", () => {
+      if (window.innerWidth >= 1024) {
+        navbar.classList.remove("hide");
+        return;
+      }
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          const currentScroll = window.scrollY || 0;
+          const delta = currentScroll - lastScroll;
+          if (Math.abs(delta) > threshold) {
+            if (delta > 0 && currentScroll > 80) navbar.classList.add("hide");
+            else navbar.classList.remove("hide");
+            lastScroll = currentScroll;
+          }
+          ticking = false;
         });
+        ticking = true;
+      }
+    }, {passive:true});
 
-        // Auto-close sidebar on link click (mobile only)
-        sidebar.querySelectorAll("a").forEach(link => {
-            link.addEventListener("click", () => {
-                if (window.innerWidth < 1024) {
-                    sidebar.classList.add("hidden");
-                }
-            });
-        });
-    </script>
+    // Auto-close sidebar on mobile
+    sidebar?.querySelectorAll("a").forEach(link => {
+      link.addEventListener("click", () => {
+        if (window.innerWidth < 1024) sidebar.classList.add("hidden");
+      });
+    });
+  </script>
 
-    {% block extra_js %}{% endblock %}
+  {% block extra_js %}{% endblock %}
 </body>
 </html>
