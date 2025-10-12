@@ -140,13 +140,13 @@
         <a href="{% url 'loan_repayment' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Kirim</a>
         <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
         <a href="{% url 'inventory:inventory_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Ombor</a>
-        <a href="{% url 'salary:employee_list' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Oyliklar</a>
+        <a href="{% url 'salary:employee_list' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Xodimlar</a>
         {% if request.user.is_superuser or request.user.role == 'manager' %}
           <a href="{% url 'admin:index' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Admin Panel</a>
         {% endif %}
       {% elif request.user.role == 'viewer' %}
         <a href="{% url 'inventory:inventory_dashboard' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Ombor</a>
-        <a href="{% url 'salary:employee_list' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Oyliklar</a>
+        <a href="{% url 'salary:employee_list' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Xodimlar</a>
         <a href="{% url 'reports:reports_home' %}" class="block px-3 py-2 rounded-lg hover-bg-primary-dark transition">Hisobotlar</a>
       {% endif %}
     </aside>

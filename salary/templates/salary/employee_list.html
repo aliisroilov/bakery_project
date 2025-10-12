@@ -1,80 +1,80 @@
 {% extends "base.html" %}
 {% load humanize %}
+
 {% block content %}
-<div class="max-w-7xl mx-auto px-6 py-10">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 py-10">
   <!-- Header -->
-  <div class="flex justify-between items-center mb-8">
+  <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-8 gap-4">
     <div>
-      <h1 class="text-4xl font-bold text-[#8A6233]">Xodimlar maoshi</h1>
-      <p class="text-[#B67B3F]/70 mt-1">Hisoblangan va to‘langan maoshlar</p>
+      <h1 class="text-3xl sm:text-4xl font-bold text-[#8A6233]">Xodimlar maoshi</h1>
+      <p class="text-[#B67B3F]/70 mt-1">Hisoblangan va to‘langan maoshlar ro‘yxati</p>
     </div>
 
-    <div class="bg-[#FFF9F3] border border-[#E6B566]/50 rounded-2xl px-6 py-3 shadow-sm">
-      <span class="text-sm text-[#8A6233]/80">Bakery balansi:</span>
+    <div class="bg-[#FFF9F3] border border-[#E6B566]/50 rounded-2xl px-6 py-3 shadow-sm text-center sm:text-right">
+      <span class="block text-sm text-[#8A6233]/80">Kassa balansi</span>
       <span class="text-xl font-semibold text-[#B67B3F]">{{ balance|floatformat:0|intcomma }} soʻm</span>
     </div>
   </div>
 
-  <!-- Table -->
-  <div class="bg-white shadow-xl rounded-2xl overflow-hidden border border-[#E6B566]/30">
-    <table class="min-w-full divide-y divide-[#E6B566]/30">
-      <thead class="bg-[#FAF7F1]">
-        <tr>
-          <th class="px-6 py-3 text-left text-xs font-semibold text-[#8A6233] uppercase tracking-wider">Xodim</th>
-          <th class="px-6 py-3 text-left text-xs font-semibold text-[#8A6233] uppercase tracking-wider">Lavozim</th>
-          <th class="px-6 py-3 text-right text-xs font-semibold text-[#8A6233] uppercase tracking-wider">Hisoblangan</th>
-          <th class="px-6 py-3 text-right text-xs font-semibold text-[#8A6233] uppercase tracking-wider">Oxirgi toʻlov</th>
-          <th class="px-6 py-3 text-right text-xs font-semibold text-[#8A6233] uppercase tracking-wider">Sana</th>
-          <th class="px-6 py-3 text-center text-xs font-semibold text-[#8A6233] uppercase tracking-wider">Amallar</th>
-        </tr>
-      </thead>
+  <!-- Employee Cards -->
+  {% if employees %}
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for emp in employees %}
+    <div class="bg-white/90 backdrop-blur-xl border border-[#E6B566]/40 rounded-3xl shadow-md hover:shadow-lg transition-all duration-200 p-6 flex flex-col justify-between">
+      <!-- Header: name & role -->
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <h2 class="text-xl font-semibold text-[#8A6233]">
+            {{ emp.user.get_full_name|default:emp.user.username }}
+          </h2>
+          <p class="text-sm text-[#B67B3F]/70 capitalize">{{ emp.user.role }}</p>
+        </div>
+      </div>
 
-      <tbody class="divide-y divide-[#E6B566]/20">
-        {% for emp in employees %}
-          <tr class="hover:bg-[#FFF9F3] transition duration-200 ease-in-out">
-            <td class="px-6 py-4 text-[#8A6233] font-medium">
-              {{ emp.user.get_full_name|default:emp.user.username }}
-            </td>
-            <td class="px-6 py-4 text-[#B67B3F] capitalize">{{ emp.user.role }}</td>
+      <!-- Salary info -->
+      <div class="space-y-2 text-sm">
+        <div class="flex justify-between">
+          <span class="text-[#8A6233]/70">Hisoblangan:</span>
+          <span class="font-semibold text-[#8A6233]">
+            {{ emp.earned|floatformat:0|intcomma }} soʻm
+          </span>
+        </div>
 
-            <!-- Hisoblangan (calculated salary) -->
-            <td class="px-6 py-4 text-right font-medium text-[#8A6233]">
-              {{ emp.earned|floatformat:0|intcomma }} soʻm
-            </td>
+        <div class="flex justify-between">
+          <span class="text-[#8A6233]/70">Oxirgi to‘lov:</span>
+          {% if emp.last_paid %}
+          <span class="font-semibold text-[#8A6233]">
+            {{ emp.last_paid|floatformat:0|intcomma }} soʻm
+          </span>
+          {% else %}
+          <span class="text-gray-400 italic">To‘lov yo‘q</span>
+          {% endif %}
+        </div>
 
-            <!-- Last payment -->
-            <td class="px-6 py-4 text-right font-medium text-[#8A6233]">
-              {% if emp.last_paid %}
-                {{ emp.last_paid|floatformat:0|intcomma }} soʻm
-              {% else %}
-                <span class="text-gray-400 italic">Toʻlov yoʻq</span>
-              {% endif %}
-            </td>
+        <div class="flex justify-between">
+          <span class="text-[#8A6233]/70">Sana:</span>
+          {% if emp.last_paid_date %}
+          <span class="font-medium text-[#8A6233]/80">{{ emp.last_paid_date }}</span>
+          {% else %}
+          <span class="text-gray-400 italic">–</span>
+          {% endif %}
+        </div>
+      </div>
 
-            <!-- Date -->
-            <td class="px-6 py-4 text-right text-[#8A6233]/80">
-              {% if emp.last_paid_date %}
-                {{ emp.last_paid_date }}
-              {% else %}
-                <span class="text-gray-400 italic">–</span>
-              {% endif %}
-            </td>
-
-            <!-- Actions -->
-            <td class="px-6 py-4 text-center">
-              <a href="{% url 'salary:pay_salary' emp.user.id %}"
-                class="inline-block px-5 py-2 bg-[#E6B566] hover:bg-[#B67B3F] text-white rounded-xl text-sm font-medium shadow-md transition duration-200">
-                Toʻlov / Avans
-              </a>
-            </td>
-          </tr>
-        {% empty %}
-        <tr>
-          <td colspan="6" class="px-6 py-6 text-center text-gray-500">Xodimlar topilmadi.</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+      <!-- Button -->
+      <div class="mt-6">
+        <a href="{% url 'salary:pay_salary' emp.user.id %}"
+           class="block text-center px-5 py-2 bg-[#E6B566] hover:bg-[#B67B3F] text-white rounded-xl text-sm font-medium shadow-md transition duration-200">
+          To‘lov / Avans
+        </a>
+      </div>
+    </div>
+    {% endfor %}
   </div>
+  {% else %}
+  <div class="text-center py-16 bg-[#FFF9F3] border border-[#E6B566]/40 rounded-3xl">
+    <p class="text-lg text-[#8A6233]/70">Xodimlar topilmadi.</p>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

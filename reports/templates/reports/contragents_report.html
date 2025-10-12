@@ -2,30 +2,58 @@
 {% load humanize %}
 
 {% block content %}
-<h2 class="text-2xl font-bold text-orange-500 mb-6">Contragents (Shops & Loans)</h2>
+<div class="max-w-6xl mx-auto p-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8 flex-wrap gap-2">
+        <h2 class="text-3xl font-bold text-[#8A6233] tracking-tight">
+            Kontragentlar (Do‘konlar va Qarzlar)
+        </h2>
+        <a href="{% url 'dashboard' %}"
+           class="inline-flex items-center text-sm text-[#B67B3F] hover:text-[#8A6233] transition-colors">
+            ← Asosiy sahifaga qaytish
+        </a>
+    </div>
 
-<div class="overflow-x-auto bg-white shadow rounded-lg p-4">
-    <table class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-orange-100">
-            <tr>
-                <th class="px-6 py-3 text-left text-sm font-medium text-gray-700">Shop</th>
-                <th class="px-6 py-3 text-left text-sm font-medium text-gray-700">Loan Balance</th>
-            </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-            {% for shop in shops %}
-            <tr>
-                <td class="px-6 py-4 text-sm text-gray-900">{{ shop.name }}</td>
-                <td class="px-6 py-4 text-sm text-red-500 font-semibold">
-                    {{ shop.loan_balance|floatformat:0|intcomma }} so'm
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="2" class="px-6 py-4 text-center text-gray-500">No shops found.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <!-- Scrollable Table Wrapper -->
+    <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm">
+                <thead class="bg-gradient-to-r from-[#FBEBD1] to-[#F5D7A1] border-b border-[#E6B566]/40">
+                    <tr>
+                        <th class="px-6 py-4 text-left font-semibold text-[#8A6233] uppercase tracking-wide whitespace-nowrap">
+                            Do‘kon nomi
+                        </th>
+                        <th class="px-6 py-4 text-left font-semibold text-[#8A6233] uppercase tracking-wide whitespace-nowrap">
+                            Qarz miqdori
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for shop in shops %}
+                    <tr class="hover:bg-[#FFF9F1] transition-all duration-200">
+                        <td class="px-6 py-4 text-gray-800 font-medium whitespace-nowrap">
+                            {{ shop.name }}
+                        </td>
+                        <td class="px-6 py-4 font-semibold whitespace-nowrap">
+                            {% if shop.loan_balance > 0 %}
+                                <span class="text-red-500">{{ shop.loan_balance|floatformat:0|intcomma }} so‘m</span>
+                            {% elif shop.loan_balance == 0 %}
+                                <span class="text-gray-400">Qarzi yo‘q</span>
+                            {% else %}
+                                <span class="text-green-600">+{{ shop.loan_balance|floatformat:0|intcomma }} so‘m</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="2" class="px-6 py-8 text-center text-gray-500">
+                            Hech qanday do‘kon topilmadi.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 {% endblock %}
