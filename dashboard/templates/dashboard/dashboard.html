@@ -32,6 +32,7 @@
 <!-- Money Stats (Managers/Admins only) -->
 {% if request.user.role != 'driver' %}
 <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mb-8">
+
     <!-- Received Money Today -->
     <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
         <p class="text-gray-500 text-sm">Bugungi tushum</p>
@@ -40,26 +41,28 @@
         </h3>
     </div>
 
-    <!-- Total Loan -->
-    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+    <!-- Total Loan (Clickable) -->
+    <a href="{% url 'reports:contragents_report' %}" 
+       class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center hover:shadow-xl transition duration-300">
         <p class="text-gray-500 text-sm">Do‘kon qarzlari</p>
         <h3 class="text-3xl font-bold text-red-600 mt-2 break-words">
             {{ total_loan|default:0|floatformat:0|intcomma }} so'm
         </h3>
-    </div>
+    </a>
 
-    <!-- Bakery Balance -->
-    <div class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center">
+    <!-- Bakery Balance (Clickable) -->
+    <a href="{% url 'reports:all_reports' %}"
+       class="bg-white shadow-lg rounded-lg p-6 flex flex-col items-center hover:shadow-xl transition duration-300">
         <p class="text-gray-500 text-sm">Kassa</p>
         <h3 class="text-3xl font-bold text-primary mt-2 break-words">
             {{ bakery_balance|default:0|floatformat:0|intcomma }} so'm
         </h3>
-    </div>
+    </a>
 </div>
 {% endif %}
 
 <!-- Districts Block -->
-<a href="{% url 'districts' %}" 
+<a href="{% url 'dashboard:districts' %}" 
    class="block bg-white shadow-lg rounded-lg p-6 hover:shadow-xl hover-bg-primary-dark transition duration-300 mb-8">
    <h3 class="text-xl font-bold text-gray-800">Hududlar bo‘yicha buyurtmalar</h3>
    <p class="text-gray-500">Hududlarni ko‘rish</p>

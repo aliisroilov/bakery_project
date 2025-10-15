@@ -4,19 +4,31 @@ from decimal import Decimal
 from .models import BakeryBalance, Purchase
 from dashboard.models import Payment
 
-def update_balance():
-    """Recalculate and sync BakeryBalance with all transactions."""
-    from django.db.models import Sum
-    total_inflows = Payment.objects.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-    total_outflows = Purchase.objects.aggregate(total=Sum("unit_price"))["total"] or Decimal("0.00")
-    balance = total_inflows - total_outflows
+@receiver(post_save, sender=Purchase)
+def decrease_balance_on_purchase(sender, instance, created, **kwargs):
+    """Reduce balance only when a new purchase is made."""
+    balance = BakeryBalance.get_instance()
 
-    obj = BakeryBalance.get_instance()
-    obj.amount = balance
-    obj.save(update_fields=["amount"])
+    if created:  # only subtract when new purchase is added
+        balance.amount -= instance.unit_price
+        balance.save(update_fields=["amount"])
+    else:
+        # when purchase is edited, we can optionally handle that later
+        pass
 
 
-@receiver([post_save, post_delete], sender=Payment)
-@receiver([post_save, post_delete], sender=Purchase)
-def sync_balance(sender, **kwargs):
-    update_balance()
+@receiver(post_delete, sender=Purchase)
+def restore_balance_on_purchase_delete(sender, instance, **kwargs):
+    """Restore balance if a purchase is deleted."""
+    balance = BakeryBalance.get_instance()
+    balance.amount += instance.unit_price
+    balance.save(update_fields=["amount"])
+
+
+@receiver(post_save, sender=Payment)
+def increase_balance_on_payment(sender, instance, created, **kwargs):
+    """Increase balance when money is collected."""
+    if created:
+        balance = BakeryBalance.get_instance()
+        balance.amount += instance.amount
+        balance.save(update_fields=["amount"])

@@ -6,7 +6,7 @@
 
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
     {% for item in district_list %}
-    <a href="{% url 'district_detail' item.district.id %}"
+    <a href="{% url 'dashboard:district_detail' item.district.id %}"
        class="group relative block bg-gradient-to-r from-secondary-light to-secondary shadow-lg rounded-xl p-6 transform transition duration-500 hover:scale-105 hover:shadow-2xl">
        
         <div class="flex items-center justify-between mb-4">

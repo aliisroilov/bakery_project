@@ -192,7 +192,7 @@ def loan_repayment_view(request):
             )
 
             messages.success(request, f"{shop.name} uchun {amount} so‘m qarz to‘landi.")
-            return redirect("loan_repayment")
+            return redirect("dashboard:loan_repayment")
     else:
         form = LoanRepaymentForm()
 

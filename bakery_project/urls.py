@@ -6,7 +6,7 @@ urlpatterns = [
     path('users/', include('users.urls')),
     path('', include('dashboard.urls')),
     path('orders/', include('orders.urls')),
-    path("dashboard/", include("dashboard.urls")),
+    path("dashboard/", include("dashboard.urls", namespace='dashboard')),
     path("reports/", include("reports.urls", namespace="reports")),  # reports app
     path('inventory/', include('inventory.urls', namespace='inventory')),
     path("salary/", include("salary.urls", namespace="salary")),
