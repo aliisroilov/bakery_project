@@ -15,6 +15,14 @@ class SalaryRate(models.Model):
     rate_type = models.CharField(max_length=20, choices=RATE_TYPE_CHOICES, default="fixed")
     notes = models.TextField(blank=True, null=True)
 
+    # 🆕 Add this new field
+    initial_balance = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text="Oldindan hisoblangan maosh (sistemadan oldingi qarzdorlik)"
+    )
+
     def __str__(self):
         return f"{self.user.username} — {self.rate} ({self.rate_type})"
 

@@ -61,11 +61,15 @@
         </div>
       </div>
 
-      <!-- Button -->
-      <div class="mt-6">
+      <!-- Buttons -->
+      <div class="mt-6 flex flex-col sm:flex-row gap-3">
         <a href="{% url 'salary:pay_salary' emp.user.id %}"
-           class="block text-center px-5 py-2 bg-[#E6B566] hover:bg-[#B67B3F] text-white rounded-xl text-sm font-medium shadow-md transition duration-200">
+           class="flex-1 text-center px-5 py-2 bg-[#E6B566] hover:bg-[#B67B3F] text-white rounded-xl text-sm font-medium shadow-md transition duration-200">
           To‘lov / Avans
+        </a>
+        <a href="{% url 'salary:salary_history' emp.user.id %}"
+           class="flex-1 text-center px-5 py-2 bg-[#FFF9F3] hover:bg-[#E6B566]/30 text-[#8A6233] border border-[#E6B566]/50 rounded-xl text-sm font-medium shadow-sm transition duration-200">
+          Oyliklar tarixi
         </a>
       </div>
     </div>

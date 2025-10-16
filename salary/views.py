@@ -8,6 +8,7 @@ from .models import SalaryPayment
 from reports.models import BakeryBalance
 from users.models import User
 from salary.utils import calculate_auto_salary  # ✅ important
+from django.contrib.auth import get_user_model
 
 def manager_or_admin_required(view_func):
     def wrapper(request, *args, **kwargs):
@@ -72,3 +73,26 @@ def pay_salary(request, user_id):
         form = SalaryPaymentForm(initial={"user_id": user.id})
 
     return render(request, "salary/pay_salary.html", {"form": form, "employee": user})
+
+
+User = get_user_model()
+
+
+def salary_history(request, user_id):
+    """
+    Show all salary payment records for a specific employee.
+    """
+    user = get_object_or_404(User, id=user_id)
+
+    payments = SalaryPayment.objects.filter(user=user).order_by("-created_at")
+
+    total_paid = sum([p.amount for p in payments])
+    total_count = payments.count()
+
+    context = {
+        "user": user,
+        "payments": payments,
+        "total_paid": total_paid,
+        "total_count": total_count,
+    }
+    return render(request, "salary/salary_history.html", context)

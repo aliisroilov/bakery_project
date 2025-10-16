@@ -7,6 +7,11 @@ from datetime import datetime, timedelta, time
 from django.utils import timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
+from django.http import JsonResponse
+from django.urls import reverse
+import logging
+from django.conf import settings
+
 
 def order_detail(request, order_id):
     """
@@ -41,25 +46,62 @@ def order_detail(request, order_id):
 
     return render(request, "orders/order_detail.html", context)
 
+logger = logging.getLogger(__name__)
+
 
 def confirm_delivery(request, order_id):
     order = get_object_or_404(Order, id=order_id)
 
     # Permission check
     if request.user.role not in ['driver', 'manager'] and not request.user.is_superuser:
-        messages.error(request, "Sizda ruxsat yo‘q")
-        return redirect("dashboard")
+        if request.headers.get("x-requested-with") == "XMLHttpRequest" or request.META.get("HTTP_X_REQUESTED_WITH") == "XMLHttpRequest":
+            return JsonResponse({"success": False, "error": "permission_denied"}, status=403)
+        else:
+            messages.error(request, "Sizda ruxsat yo‘q")
+            return redirect("dashboard")
+
+    # helper to detect ajax
+    def is_ajax(req):
+        return (req.headers.get("x-requested-with") == "XMLHttpRequest") or (req.META.get("HTTP_X_REQUESTED_WITH") == "XMLHttpRequest")
 
     if request.method == "POST":
         form = ConfirmDeliveryForm(request.POST, order=order)
         if form.is_valid():
-            form.save(user=request.user)
-            messages.success(request, "Buyurtma tasdiqlandi!")
-            return redirect("district_detail", district_id=order.shop.region.id)
+            try:
+                form.save(user=request.user)
+            except Exception as e:
+                logger.exception("Error saving confirm delivery form")
+                if is_ajax(request):
+                    resp = {"success": False, "error": "server_exception"}
+                    if settings.DEBUG:
+                        resp["exception"] = str(e)
+                    return JsonResponse(resp, status=500)
+                else:
+                    messages.error(request, "Server xatosi yuz berdi.")
+                    return redirect(request.path)
+
+            redirect_url = reverse("dashboard:district_detail", args=[order.shop.region.id])
+
+            if is_ajax(request):
+                return JsonResponse({"success": True, "redirect_url": redirect_url})
+            else:
+                messages.success(request, "Buyurtma tasdiqlandi!")
+                return redirect(redirect_url)
+        else:
+            # form invalid
+            if is_ajax(request):
+                # return structured form errors
+                return JsonResponse({
+                    "success": False,
+                    "error": "invalid_form",
+                    "form_errors": form.errors.get_json_data()
+                }, status=400)
+            else:
+                # normal flow (re-render with errors)
+                pass
     else:
         form = ConfirmDeliveryForm(order=order)
 
-    # Prepare fields for table
     fields = [(item, form[f"delivered_{item.id}"]) for item in order.items.all()]
 
     return render(request, "orders/confirm_delivery.html", {
@@ -67,8 +109,6 @@ def confirm_delivery(request, order_id):
         "form": form,
         "fields": fields,
     })
-
-
 
 def mark_fully_delivered(request, order_id):
     """

@@ -2,9 +2,14 @@
 {% block content %}
 
 <div class="container mx-auto px-6 py-10">
+
+    
+
   <!-- Header -->
   <div class="flex justify-between items-center mb-8">
-    <h1 class="text-3xl font-bold text-orange-600">Buyurtmalar tarixi(qoplarda)</h1>
+    <h1 class="text-3xl font-bold text-orange-600">
+      Buyurtmalar tarixi (qoplarda)
+    </h1>
     <a href="{% url 'inventory:production_create' %}" 
        class="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-4 py-2 rounded-lg shadow">
        ➕ Yangi buyurtma
@@ -27,8 +32,8 @@
         <tr class="hover:bg-gray-50 transition">
           <td class="px-6 py-3">{{ forloop.counter }}</td>
           <td class="px-6 py-3 font-medium text-gray-900">{{ prod.product.name }}</td>
-          <td class="px-6 py-3">{{ prod.meshok_count }}</td>
-          <td class="px-6 py-3 text-gray-500">{{ prod.created_at|date:"Y-m-d H:i" }}</td>
+          <td class="px-6 py-3 font-semibold text-gray-800">{{ prod.meshok }}</td>
+          <td class="px-6 py-3 text-gray-500">{{ prod.date|date:"d.m.Y H:i" }}</td>
         </tr>
         {% empty %}
         <tr>
@@ -40,8 +45,6 @@
       </tbody>
     </table>
   </div>
-
-  <!-- Back link -->
 
 </div>
 

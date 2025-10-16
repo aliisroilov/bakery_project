@@ -32,36 +32,49 @@ def contragents_report(request):
         "shops": shops
     })
 
-@manager_or_admin_required
 def sales_report(request):
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
 
-    order_items = OrderItem.objects.select_related('product', 'order')
+    # ✅ Include both lowercase and capitalized forms
+    valid_statuses = ['delivered', 'Delivered', 'partially_delivered', 'Partially Delivered']
 
+    # ✅ Query only relevant orders
+    order_items = (
+        OrderItem.objects
+        .select_related('product', 'order', 'order__shop')
+        .filter(order__status__in=valid_statuses)
+    )
+
+    # ✅ Apply optional date filtering
     if start_date and end_date:
-        order_items = order_items.filter(
-            order__created_at__date__range=[start_date, end_date]
-        )
+        order_items = order_items.filter(order__created_at__date__range=[start_date, end_date])
+    elif start_date:
+        order_items = order_items.filter(order__created_at__date__gte=start_date)
+    elif end_date:
+        order_items = order_items.filter(order__created_at__date__lte=end_date)
 
-    # Aggregate total sales
-    total_sales = order_items.aggregate(total=Sum(F('unit_price') * F('quantity')))['total'] or 0
+    # ✅ Use delivered_quantity if exists, else quantity
+    qty_field = 'delivered_quantity' if hasattr(OrderItem, 'delivered_quantity') else 'quantity'
 
-    # Product-wise sales
-    product_sales = order_items.values('product__name').annotate(
-        quantity_sold=Sum('quantity'),
-        revenue=Sum(F('unit_price') * F('quantity'))
-    ).order_by('-revenue')
+    # ✅ Annotate by product and shop
+    product_sales = order_items.values(
+        'product__name',
+        'order__shop__name',
+        'order__status',
+        'order__created_at'
+    ).annotate(quantity_sold=Sum(qty_field)).order_by('-order__created_at')
+
+    total_qty = order_items.aggregate(total=Sum(qty_field))['total'] or 0
 
     context = {
-        'report_title': 'Sales Report',
-        'total': total_sales,
-        'total_label': 'Total Sales',
+        'report_title': 'Sotuvlar hisobotlari',
         'product_sales': product_sales,
+        'total': total_qty,
         'start_date': start_date,
         'end_date': end_date,
-        'show_filter': True,
     }
+
     return render(request, 'reports/sales_report.html', context)
 
 
@@ -199,11 +212,6 @@ def all_reports(request):
     purchases = Purchase.objects.all()
     repayments = LoanRepayment.objects.all()
     payments = Payment.objects.filter(payment_type="collection")
-    delivered_items = (
-        OrderItem.objects
-        .select_related("order", "product", "order__shop")
-        .filter(order__status__in=["Delivered", "confirmed"])
-    )
     salary_payments = SalaryPayment.objects.all()
 
     # Apply date filters
@@ -211,31 +219,29 @@ def all_reports(request):
         purchases = purchases.filter(purchase_date__gte=start_date)
         repayments = repayments.filter(date__gte=start_date)
         payments = payments.filter(date__gte=start_date)
-        delivered_items = delivered_items.filter(order__created_at__date__gte=start_date)
         salary_payments = salary_payments.filter(created_at__date__gte=start_date)
 
     if end_date:
         purchases = purchases.filter(purchase_date__lte=end_date)
         repayments = repayments.filter(date__lte=end_date)
         payments = payments.filter(date__lte=end_date)
-        delivered_items = delivered_items.filter(order__created_at__date__lte=end_date)
         salary_payments = salary_payments.filter(created_at__date__lte=end_date)
 
-    # Collect all reports
+    # Collect all reports (money-related only)
     reports = []
 
-    # 1️⃣ Purchases
+    # Purchases (expenses)
     for p in purchases:
         reports.append({
             "date": p.purchase_date,
             "category": "Xarid (Purchase)",
-            "description": p.notes or getattr(p, "item_name", "Mahsulot xaridi"),
+            "description": p.notes or p.item_name,
             "counterparty": "-",
             "income": None,
             "expense": p.unit_price or Decimal("0"),
         })
 
-    # 2️⃣ Loan repayments
+    # Loan repayments (income)
     for r in repayments:
         reports.append({
             "date": r.date,
@@ -246,7 +252,7 @@ def all_reports(request):
             "expense": None,
         })
 
-    # 3️⃣ Payment collections
+    # Payment collections (income)
     for pay in payments:
         reports.append({
             "date": pay.date,
@@ -257,18 +263,7 @@ def all_reports(request):
             "expense": None,
         })
 
-    # 4️⃣ Sales (Delivered)
-    for item in delivered_items:
-        reports.append({
-            "date": item.order.created_at.date() if isinstance(item.order.created_at, datetime) else item.order.created_at,
-            "category": "Sotuv (Sale)",
-            "description": f"{item.product.name} × {item.delivered_quantity}",
-            "counterparty": item.order.shop.name,
-            "income": item.unit_price * item.delivered_quantity,
-            "expense": None,
-        })
-
-    # 5️⃣ Salary / Advance Payments
+    # Salary / Advance (expenses)
     for s in salary_payments:
         reports.append({
             "date": s.created_at.date(),
@@ -279,12 +274,10 @@ def all_reports(request):
             "expense": s.amount,
         })
 
-    # Normalize dates
+    # Normalize and sort
     for r in reports:
         if isinstance(r["date"], datetime):
             r["date"] = r["date"].date()
-
-    # Sort by date
     reports.sort(key=lambda x: x["date"], reverse=True)
 
     # Current bakery balance

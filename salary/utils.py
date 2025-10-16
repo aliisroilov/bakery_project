@@ -14,15 +14,19 @@ def calculate_auto_salary(user):
         return Decimal("0.00")
 
     rate = Decimal(rate_obj.rate)
+    initial_balance = Decimal(rate_obj.initial_balance or 0)  # 🆕 include this
 
     if rate_obj.rate_type == "per_qop":
-        return calculate_auto_salary_for_baker(rate)
+        earned = calculate_auto_salary_for_baker(rate)
     elif rate_obj.rate_type == "per_week":
-        return calculate_auto_salary_for_driver(user, rate)
+        earned = calculate_auto_salary_for_driver(user, rate)
     elif rate_obj.rate_type == "fixed":
-        return rate
+        earned = rate
+    else:
+        earned = Decimal("0.00")
 
-    return Decimal("0.00")
+    # 🧮 include the old debt in total earned
+    return earned + initial_balance
 
 
 def calculate_auto_salary_for_baker(rate):

@@ -33,7 +33,7 @@ DATABASES = {
 # =========================
 SECRET_KEY = config('SECRET_KEY', default='unsafe-secret-key-for-testing')
 DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = ['sutli-non.uz', 'www.sutli-non.uz', '217.76.51.229']
+ALLOWED_HOSTS = ['sutli-non.uz', 'www.sutli-non.uz', '217.76.51.229']  # For testing on Heroku
 
 # =========================
 # Applications

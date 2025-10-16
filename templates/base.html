@@ -18,7 +18,10 @@
     .hover-bg-primary-dark:hover { background-color: #dcc38b; }
 
     html { scroll-behavior: smooth; }
-    html, body { max-width: 100%; overflow-x: hidden; }
+    body {
+      max-width: 100%;
+      overflow-x: auto; /* allow horizontal scroll when needed */
+    }
     body { padding-top: 64px; }
 
     /* ---------- Navbar ---------- */
