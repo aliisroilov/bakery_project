@@ -164,7 +164,6 @@ def district_detail_view(request, district_id):
 # --- LOAN REPAYMENT ---
 @login_required
 def loan_repayment_view(request):
-    """Form for managers to register loan repayments."""
     if request.method == "POST":
         form = LoanRepaymentForm(request.POST)
         if form.is_valid():
@@ -178,18 +177,8 @@ def loan_repayment_view(request):
                 shop.loan_balance = 0
             shop.save()
 
-            # Record repayment entry
-            if LoanRepayment:
-                LoanRepayment.objects.create(shop=shop, amount=amount)
-
-            # Record Payment so it appears in reports & updates balance
-            Payment.objects.create(
-                shop=shop,
-                amount=amount,
-                payment_type="repayment",
-                collected_by=request.user,
-                notes="Loan repayment via form"
-            )
+            # Create LoanRepayment (signal will handle BakeryBalance)
+            LoanRepayment.objects.create(shop=shop, amount=amount)
 
             messages.success(request, f"{shop.name} uchun {amount} so‘m qarz to‘landi.")
             return redirect("dashboard:loan_repayment")

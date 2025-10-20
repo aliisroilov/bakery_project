@@ -11,7 +11,7 @@ from django.http import JsonResponse
 from django.urls import reverse
 import logging
 from django.conf import settings
-
+from inventory.models import BakeryProductStock
 
 def order_detail(request, order_id):
     """
@@ -52,53 +52,54 @@ logger = logging.getLogger(__name__)
 def confirm_delivery(request, order_id):
     order = get_object_or_404(Order, id=order_id)
 
-    # Permission check
+    # 🔒 Permission check
     if request.user.role not in ['driver', 'manager'] and not request.user.is_superuser:
-        if request.headers.get("x-requested-with") == "XMLHttpRequest" or request.META.get("HTTP_X_REQUESTED_WITH") == "XMLHttpRequest":
+        if _is_ajax(request):
             return JsonResponse({"success": False, "error": "permission_denied"}, status=403)
-        else:
-            messages.error(request, "Sizda ruxsat yo‘q")
-            return redirect("dashboard")
-
-    # helper to detect ajax
-    def is_ajax(req):
-        return (req.headers.get("x-requested-with") == "XMLHttpRequest") or (req.META.get("HTTP_X_REQUESTED_WITH") == "XMLHttpRequest")
+        messages.error(request, "Sizda ruxsat yo‘q")
+        return redirect("dashboard")
 
     if request.method == "POST":
         form = ConfirmDeliveryForm(request.POST, order=order)
         if form.is_valid():
             try:
                 form.save(user=request.user)
+
+                # 🥐 Deduct delivered products from bakery stock
+                for item in order.items.all():
+                    delivered_qty = Decimal(item.delivered_quantity or 0)
+                    if delivered_qty > 0:
+                        stock, _ = BakeryProductStock.objects.get_or_create(
+                            product=item.product,
+                            defaults={"quantity": Decimal("0.000"), "pinned": True}
+                        )
+                        stock.quantity -= delivered_qty
+                        stock.save(update_fields=["quantity"])
+
+                redirect_url = reverse("dashboard:district_detail", args=[order.shop.region.id])
+
+                if _is_ajax(request):
+                    return JsonResponse({"success": True, "redirect_url": redirect_url})
+                messages.success(request, "Buyurtma tasdiqlandi!")
+                return redirect(redirect_url)
+
             except Exception as e:
-                logger.exception("Error saving confirm delivery form")
-                if is_ajax(request):
+                logger.exception("Error during delivery confirmation")
+                if _is_ajax(request):
                     resp = {"success": False, "error": "server_exception"}
                     if settings.DEBUG:
                         resp["exception"] = str(e)
                     return JsonResponse(resp, status=500)
-                else:
-                    messages.error(request, "Server xatosi yuz berdi.")
-                    return redirect(request.path)
+                messages.error(request, "Server xatosi yuz berdi.")
+                return redirect(request.path)
 
-            redirect_url = reverse("dashboard:district_detail", args=[order.shop.region.id])
-
-            if is_ajax(request):
-                return JsonResponse({"success": True, "redirect_url": redirect_url})
-            else:
-                messages.success(request, "Buyurtma tasdiqlandi!")
-                return redirect(redirect_url)
-        else:
-            # form invalid
-            if is_ajax(request):
-                # return structured form errors
-                return JsonResponse({
-                    "success": False,
-                    "error": "invalid_form",
-                    "form_errors": form.errors.get_json_data()
-                }, status=400)
-            else:
-                # normal flow (re-render with errors)
-                pass
+        # Form invalid
+        if _is_ajax(request):
+            return JsonResponse({
+                "success": False,
+                "error": "invalid_form",
+                "form_errors": form.errors.get_json_data()
+            }, status=400)
     else:
         form = ConfirmDeliveryForm(order=order)
 
@@ -110,29 +111,22 @@ def confirm_delivery(request, order_id):
         "fields": fields,
     })
 
+
 def mark_fully_delivered(request, order_id):
     """
-    Marks an order as fully completed (yopilgan), 
-    keeping already delivered quantities as final.
-    Does NOT change delivered quantities.
+    Marks an order as fully completed (yopilgan),
+    without changing delivered quantities.
+    Also adjusts shop loan balance accordingly.
     """
     order = get_object_or_404(Order, id=order_id)
 
-    # ✅ Calculate total based on already delivered quantities
     total_delivered = sum(
-        Decimal(item.delivered_quantity) * Decimal(item.unit_price)
+        Decimal(item.delivered_quantity or 0) * Decimal(item.unit_price or 0)
         for item in order.items.all()
     )
-
-    # ✅ Calculate total paid for this order
     total_paid = sum(p.amount for p in Payment.objects.filter(order=order))
+    remaining = max(total_delivered - total_paid, Decimal(0))
 
-    # ✅ Remaining debt = delivered - paid
-    remaining = total_delivered - total_paid
-    if remaining < 0:
-        remaining = Decimal(0)
-
-    # ✅ Update order and shop loan
     order.status = "Delivered"
     order.save(update_fields=["status"])
 
@@ -145,3 +139,12 @@ def mark_fully_delivered(request, order_id):
     )
 
     return redirect("order_detail", order_id=order.id)
+
+
+# 🧩 Helper
+def _is_ajax(request):
+    """Detect AJAX requests consistently."""
+    return (
+        request.headers.get("x-requested-with") == "XMLHttpRequest" or
+        request.META.get("HTTP_X_REQUESTED_WITH") == "XMLHttpRequest"
+    )

@@ -1,7 +1,7 @@
 from decimal import Decimal
 from django.db import transaction
 from django import forms
-from .models import Ingredient, Purchase, Production
+from .models import Ingredient, Purchase, Production, DailyBakeryProduction
 from django.apps import apps
 
 class IngredientForm(forms.ModelForm):
@@ -47,3 +47,11 @@ class ProductionForm(forms.ModelForm):
                 production.save()
                 production.apply_consumption()
         return production
+
+class DailyBakeryProductionForm(forms.ModelForm):
+    class Meta:
+        model = DailyBakeryProduction
+        fields = ["product", "quantity_produced", "note"]
+        widgets = {
+            "note": forms.Textarea(attrs={"rows": 2}),
+        }

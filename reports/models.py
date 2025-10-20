@@ -2,10 +2,6 @@ from django.db import models
 from django.utils import timezone
 from decimal import Decimal
 
-# reports/models.py
-from decimal import Decimal
-from django.db import models
-
 class BakeryBalance(models.Model):
     """
     Tracks the bakery's current cash balance.

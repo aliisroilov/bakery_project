@@ -147,10 +147,10 @@ def purchase_list(request):
     # Group purchases by category
     purchases_by_category = {}
     for p in purchases:
-        category = p.category.name
-        if category not in purchases_by_category:
-            purchases_by_category[category] = []
-        purchases_by_category[category].append(p)
+        category_name = p.category.name if p.category else "Kategoriya belgilanmagan"
+        if category_name not in purchases_by_category:
+            purchases_by_category[category_name] = []
+        purchases_by_category[category_name].append(p)
 
     # Total cost (sum of unit_price)
     total_cost = purchases.aggregate(total=Sum('unit_price'))['total'] or 0
@@ -163,7 +163,6 @@ def purchase_list(request):
     }
 
     return render(request, "reports/purchase_report.html", context)
-
 
 def purchase_create(request):
     if request.method == "POST":

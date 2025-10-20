@@ -133,3 +133,45 @@ class ProductionIngredientUsage(models.Model):
 
     def __str__(self):
         return f"{self.production} used {self.quantity_used} {self.ingredient.unit} of {self.ingredient.name}"
+
+
+class DailyBakeryProduction(models.Model):
+    """
+    Manager-entered daily production for finished bakery products.
+    Increases BakeryProductStock.quantity directly (no ingredient deduction).
+    """
+    product = models.ForeignKey('products.Product', on_delete=models.PROTECT, related_name='daily_productions')
+    quantity_produced = models.DecimalField(max_digits=12, decimal_places=3, validators=[MinValueValidator(Decimal('0.001'))])
+    date = models.DateField(auto_now_add=True)
+    note = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = "Daily Bakery Production"
+        verbose_name_plural = "Daily Bakery Productions"
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"{self.product.name} — {self.quantity_produced} (on {self.date})"
+
+    def save(self, *args, **kwargs):
+        from inventory.models import BakeryProductStock
+        creating = self._state.adding  # check if new record
+        super().save(*args, **kwargs)
+        if creating:
+            # 🧮 Add produced quantity to bakery stock
+            stock, _ = BakeryProductStock.objects.get_or_create(
+                product=self.product,
+                defaults={"quantity": Decimal("0.000"), "pinned": True}
+            )
+            stock.quantity += self.quantity_produced
+            stock.save(update_fields=["quantity"])
+
+
+class BakeryProductStock(models.Model):
+    product = models.ForeignKey('products.Product', on_delete=models.CASCADE, related_name='bakery_stocks')
+    quantity = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    pinned = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.product.name} — {self.quantity}"

@@ -2,29 +2,33 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.db import transaction
 from django.utils import timezone
-from .models import Ingredient, Purchase, Production
-from .forms import IngredientForm, PurchaseForm, ProductionForm
+from .models import Ingredient, Purchase, Production, DailyBakeryProduction, BakeryProductStock
+from .forms import IngredientForm, PurchaseForm, ProductionForm, DailyBakeryProductionForm
 from reports.models import Purchase as ReportPurchase
 from decimal import Decimal
 
 
+
 def inventory_dashboard(request):
-    # All ingredients with their units
+    # 🧂 All ingredient stocks
     ingredients = Ingredient.objects.select_related("unit").all().order_by("name")
 
-    # Latest purchases and productions — use "date" instead of "created_at"
+    # 🥐 Bakery finished products (pinned ones first)
+    bakery_products = BakeryProductStock.objects.all().order_by("-pinned", "product__name")
+
+    # 📅 Recent purchases and productions
     recent_purchases = Purchase.objects.select_related("ingredient").order_by("-date")[:5]
     recent_productions = Production.objects.select_related("product").order_by("-date")[:5]
 
-    # Low stock detection
+    # ⚠️ Low stock detection
     low_stock_ingredients = [
         ing for ing in ingredients
         if ing.quantity <= ing.low_stock_threshold
     ]
 
-
     context = {
         "ingredients": ingredients,
+        "bakery_products": bakery_products,
         "recent_purchases": recent_purchases,
         "recent_productions": recent_productions,
         "low_stock_ingredients": low_stock_ingredients,
@@ -33,6 +37,27 @@ def inventory_dashboard(request):
     return render(request, "inventory/dashboard.html", context)
 
 
+def daily_production_entry(request):
+    """Manager enters produced bakery items at the end of each day."""
+    if request.method == "POST":
+        form = DailyBakeryProductionForm(request.POST)
+        if form.is_valid():
+            production = form.save(commit=False)
+            production.created_by = request.user
+            production.save()
+            messages.success(request, "✅ Bugungi mahsulot miqdori muvaffaqiyatli kiritildi.")
+            return redirect("inventory:bakery_stock_list")
+    else:
+        form = DailyBakeryProductionForm()
+
+    recent_entries = DailyBakeryProduction.objects.select_related("product").order_by("-date")[:10]
+    stocks = BakeryProductStock.objects.select_related("product").order_by("-pinned", "product__name")
+
+    return render(request, "inventory/daily_production_entry.html", {
+        "form": form,
+        "recent_entries": recent_entries,
+        "stocks": stocks,
+    })
 
 # 🧂 Ingredient List + Create
 def ingredient_list(request):
