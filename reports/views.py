@@ -10,6 +10,7 @@ from dashboard.models import LoanRepayment, Payment
 from salary.models import SalaryPayment
 from shops.models import Shop
 from decimal import Decimal
+from orders.models import Order
  # add BakeryBalance
 
 
@@ -31,6 +32,22 @@ def contragents_report(request):
     return render(request, "reports/contragents_report.html", {
         "shops": shops
     })
+
+def shop_history(request, shop_id):
+    shop = get_object_or_404(Shop, id=shop_id)
+
+    # 🧾 Fetch all related data
+    orders = Order.objects.filter(shop=shop).select_related("shop").order_by("-order_date")
+    payments = Payment.objects.filter(shop=shop).order_by("-date")
+
+    # Optional: you can later add deliveries, returns, etc.
+    context = {
+        "shop": shop,
+        "orders": orders,
+        "payments": payments,
+    }
+    return render(request, "reports/shop_history.html", context)
+
 
 def sales_report(request):
     start_date = request.GET.get('start_date')

@@ -1,0 +1,93 @@
+{% extends 'base.html' %}
+{% load humanize %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto p-6">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8 flex-wrap gap-2">
+        <h2 class="text-3xl font-bold text-[#8A6233] tracking-tight">
+            {{ shop.name }} — To‘liq tarix
+        </h2>
+        <a href="{% url 'reports:contragents_report' %}"
+           class="inline-flex items-center text-sm text-[#B67B3F] hover:text-[#8A6233] transition-colors">
+            ← Orqaga qaytish
+        </a>
+    </div>
+
+    <!-- Loan info -->
+    <div class="mb-6 text-lg">
+        {% if shop.loan_balance > 0 %}
+            <span class="text-red-500 font-semibold">
+                Qarz miqdori: {{ shop.loan_balance|floatformat:0|intcomma }} so‘m
+            </span>
+        {% elif shop.loan_balance == 0 %}
+            <span class="text-gray-500">Qarzi yo‘q</span>
+        {% else %}
+            <span class="text-green-600 font-semibold">
+                +{{ shop.loan_balance|floatformat:0|intcomma }} so‘m
+            </span>
+        {% endif %}
+    </div>
+
+    <!-- Orders section -->
+    <div class="mb-10">
+        <h3 class="text-2xl font-semibold text-[#8A6233] mb-4">🧾 Buyurtmalar</h3>
+        <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead class="bg-gradient-to-r from-[#FBEBD1] to-[#F5D7A1]">
+                        <tr>
+                            <th class="px-6 py-3 text-left font-semibold">Sana</th>
+                            <th class="px-6 py-3 text-left font-semibold">Holati</th>
+                            <th class="px-6 py-3 text-left font-semibold">Umumiy summa</th>
+                            <th class="px-6 py-3 text-left font-semibold">Olingan summa</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in orders %}
+                        <tr class="hover:bg-[#FFF9F1] transition-all">
+                            <td class="px-6 py-3 whitespace-nowrap">{{ order.order_date|date:"d.m.Y" }}</td>
+                            <td class="px-6 py-3 whitespace-nowrap">{{ order.status }}</td>
+                            <td class="px-6 py-3 whitespace-nowrap">{{ order.total_amount|floatformat:0|intcomma }} so‘m</td>
+                            <td class="px-6 py-3 whitespace-nowrap">{{ order.received_amount|floatformat:0|intcomma }} so‘m</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">Buyurtmalar topilmadi.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payments section -->
+    <div>
+        <h3 class="text-2xl font-semibold text-[#8A6233] mb-4">💳 To‘lovlar</h3>
+        <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead class="bg-gradient-to-r from-[#FBEBD1] to-[#F5D7A1]">
+                        <tr>
+                            <th class="px-6 py-3 text-left font-semibold">Sana</th>
+                            <th class="px-6 py-3 text-left font-semibold">To‘lov turi</th>
+                            <th class="px-6 py-3 text-left font-semibold">Summasi</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in payments %}
+                        <tr class="hover:bg-[#FFF9F1] transition-all">
+                            <td class="px-6 py-3 whitespace-nowrap">{{ p.date|date:"d.m.Y" }}</td>
+                            <td class="px-6 py-3 whitespace-nowrap">{{ p.get_payment_type_display }}</td>
+                            <td class="px-6 py-3 whitespace-nowrap">{{ p.amount|floatformat:0|intcomma }} so‘m</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">To‘lovlar topilmadi.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

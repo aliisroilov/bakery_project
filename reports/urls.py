@@ -22,5 +22,5 @@ urlpatterns = [
     # Purchases Report
     path("purchases/report/", views.purchase_list, name="purchase_list"),
     path("contragents/", views.contragents_report, name="contragents_report"),
-    
+    path("contragents/<int:shop_id>/", views.shop_history, name="shop_history"),
 ]

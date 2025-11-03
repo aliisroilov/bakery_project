@@ -2,6 +2,9 @@ from django.db import models
 from shops.models import Shop
 from products.models import Product
 from django.utils import timezone
+from decimal import Decimal
+from dashboard.models import Payment
+from reports.models import BakeryBalance
 
 class Order(models.Model):
     STATUS_CHOICES = [
@@ -14,20 +17,37 @@ class Order(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     order_date = models.DateField(default=timezone.now)
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default="Pending")
-    
+
+    # 💰 New field: how much was received from this order
+    received_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal("0.00"),
+        verbose_name="Olingan summa"
+    )
+
     def __str__(self):
         return f"Order #{self.id} - {self.shop.name}"
+
+    def total_amount(self):
+        """Sum of ordered items."""
+        return sum(item.total_price for item in self.items.all())
 
     def update_status(self):
         items = self.items.all()
         if all(item.delivered_quantity == 0 for item in items):
             self.status = "Pending"
-        elif all(item.delivered_quantity >= item.ordered_quantity for item in items):
+        elif all(item.delivered_quantity >= item.quantity for item in items):
             self.status = "Delivered"
         else:
             self.status = "Partially Delivered"
-        self.save()
+        self.save(update_fields=["status"])
 
+    def save(self, *args, **kwargs):
+        """
+        Keep save() simple: do not perform side-effects here.
+        Financial side-effects (Payment/BakeryBalance/shop.loan_balance)
+        are handled centrally elsewhere (process_order_payment).
+        """
+        super().save(*args, **kwargs)
 
 
 class OrderItem(models.Model):
