@@ -1,1 +1,1 @@
-gunicorn bakery_project.wsgi
+web: gunicorn bakery_project.wsgi
