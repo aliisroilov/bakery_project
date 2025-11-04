@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Unit, Ingredient, Purchase, Production, ProductRecipe, ProductionIngredientUsage
+from .models import Unit, Ingredient, Purchase, Production, ProductRecipe, ProductionIngredientUsage, DailyBakeryProduction, BakeryProductStock
 
 @admin.register(Unit)
 class UnitAdmin(admin.ModelAdmin):
@@ -43,3 +43,16 @@ class ProductionAdmin(admin.ModelAdmin):
 @admin.register(ProductionIngredientUsage)
 class ProductionIngredientUsageAdmin(admin.ModelAdmin):
     list_display = ('production', 'ingredient', 'quantity_used')
+
+
+@admin.register(DailyBakeryProduction)
+class DailyBakeryProductionAdmin(admin.ModelAdmin):
+    list_display = ("product", "date", "quantity_produced", "confirmed")
+    list_filter = ("date", "product", "confirmed")
+    ordering = ("-date",)
+    readonly_fields = ()
+    # Because save() updates stock, admin edit will work. But prevent deletion in admin if confirmed:
+    def has_delete_permission(self, request, obj=None):
+        if obj and obj.confirmed:
+            return False
+        return super().has_delete_permission(request, obj)

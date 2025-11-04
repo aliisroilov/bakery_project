@@ -1,4 +1,3 @@
-# orders/admin.py
 from django.contrib import admin
 from .models import Order, OrderItem
 from .utils import process_order_payment
@@ -19,9 +18,14 @@ class OrderAdmin(admin.ModelAdmin):
     inlines = [OrderItemInline]
     list_per_page = 20
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # ❌ remove process_order_payment() here — too early!
+
     def save_related(self, request, form, formsets, change):
-        """Called *after* inline items are saved."""
         super().save_related(request, form, formsets, change)
         obj = form.instance
         if obj.status in ["Delivered", "Partially Delivered"]:
+            from .utils import process_order_payment
             process_order_payment(obj)
+            print(f"[ADMIN] process_order_payment() called after inlines for order #{obj.id}")

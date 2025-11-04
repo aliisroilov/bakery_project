@@ -9,7 +9,7 @@
     <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] drop-shadow-sm mb-4 sm:mb-0">
       Ombor Boshqaruvi
     </h1>
-    <div class="flex gap-3">
+    <div class="flex gap-3 flex-wrap">
       <a href="{% url 'inventory:purchase_create' %}"
          class="bg-gradient-to-r from-[#E6B566] to-[#B67B3F] hover:from-[#DFAE59] hover:to-[#9C6A33] text-white px-5 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 text-sm font-semibold">
          + Xarid Qo‘shish
@@ -18,10 +18,14 @@
          class="bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] hover:from-[#A36E33] hover:to-[#F1C05A] text-white px-5 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 text-sm font-semibold">
          + Ishlab Chiqarish
       </a>
+      <a href="{% url 'inventory:inventory_revision' %}"
+         class="bg-gradient-to-r from-[#F6C87B] to-[#B67B3F] hover:from-[#E6B566] hover:to-[#9C6A33] text-white px-5 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 text-sm font-semibold">
+         🔄 Inventarizatsiya
+      </a>
     </div>
   </div>
 
-  <!-- ⚠️ Low Stock Section -->
+  <!-- ⚠️ Low Stock Alert -->
   {% if low_stock_ingredients %}
   <div class="bg-red-50/90 backdrop-blur-md rounded-3xl shadow-lg border border-red-300 mb-12 p-6">
     <h2 class="text-2xl font-bold text-red-700 mb-4 flex items-center gap-2">
@@ -59,7 +63,6 @@
         <h2 class="text-2xl font-bold text-[#B67B3F]">So‘nggi Xaridlar</h2>
         <a href="{% url 'inventory:purchase_list' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko‘rish</a>
       </div>
-
       <div class="overflow-x-auto rounded-xl border border-[#E6B566]/40">
         <table class="w-full text-sm text-left text-gray-700">
           <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
@@ -90,7 +93,6 @@
         <h2 class="text-2xl font-bold text-[#A36E33]">So‘nggi Ishlab Chiqarish</h2>
         <a href="{% url 'inventory:production_history' %}" class="text-[#B67B3F] hover:text-[#9C6A33] text-sm font-medium underline">Barchasini ko‘rish</a>
       </div>
-
       <div class="overflow-x-auto rounded-xl border border-[#E6B566]/40">
         <table class="w-full text-sm text-left text-gray-700">
           <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
@@ -117,35 +119,46 @@
   </div>
 
   <!-- 🍞 Bakery Products Overview -->
-  <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8 mb-12">
-    <h2 class="text-2xl font-bold text-[#8A6233] mb-5">Tayyor Nonlar</h2>
-    <div class="rounded-xl border border-[#E6B566]/30 overflow-hidden">
-      <table class="w-full table-auto text-sm text-left text-gray-700">
-        <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
-          <tr>
-            <th class="px-4 py-3">Mahsulot</th>
-            <th class="px-4 py-3 text-right">Joriy Miqdor</th>
-            <th class="px-4 py-3 text-right">Yangilangan sana</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for stock in bakery_stocks %}
-          <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
-            <td class="px-4 py-2 font-semibold text-gray-800">{{ stock.product.name }}</td>
-            <td class="px-4 py-2 text-right text-[#A36E33] font-semibold">{{ stock.quantity|floatformat:2 }}</td>
-            <td class="px-4 py-2 text-right text-gray-500">{{ stock.updated_at|date:"d M Y" }}</td>
-          </tr>
-          {% empty %}
-          <tr><td colspan="3" class="text-center py-4 text-gray-400">Tayyor mahsulotlar mavjud emas.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <!-- 🍞 Bakery Products Overview -->
+    <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8 mb-12">
+      <h2 class="text-2xl font-bold text-[#8A6233] mb-5">Tayyor Nonlar</h2>
+      <div class="rounded-xl border border-[#E6B566]/30 overflow-hidden">
+        <table class="w-full table-auto text-sm text-left text-gray-700">
+          <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
+            <tr>
+              <th class="px-4 py-3">Mahsulot</th>
+              <th class="px-4 py-3 text-right">Joriy Miqdor</th>
+              <th class="px-4 py-3 text-right">Yangilangan sana</th>
+              <th class="px-4 py-3 text-center">Ishlab Chiqarish Qo‘shish</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for stock in bakery_stocks %}
+            <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
+              <td class="px-4 py-2 font-semibold text-gray-800">{{ stock.product.name }}</td>
+              <td class="px-4 py-2 text-right text-[#A36E33] font-semibold">{{ stock.quantity|floatformat:2 }}</td>
+              <td class="px-4 py-2 text-right text-gray-500">{{ stock.updated_at|date:"d M Y" }}</td>
+              <td class="px-4 py-2 text-center">
+                <a href="{% url 'inventory:daily_production_entry' %}" 
+                   class="bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] hover:from-[#A36E33] hover:to-[#F1C05A] text-white px-3 py-1 rounded-xl shadow-md hover:shadow-lg transition-all text-xs font-semibold">
+                   + Qo‘shish
+                </a>
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="4" class="text-center py-4 text-gray-400">Tayyor mahsulotlar mavjud emas.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
 
-  <!-- 🧂 Ingredient Overview -->
+
+  <!-- 🧂 Ingredients Overview -->
   <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8">
-    <h2 class="text-2xl font-bold text-[#8A6233] mb-5"> Xomashyo Ombori</h2>
+    <h2 class="text-2xl font-bold text-[#8A6233] mb-5">Xomashyo Ombori</h2>
     <div class="rounded-xl border border-[#E6B566]/30 overflow-hidden">
       <table class="w-full table-auto text-sm text-left text-gray-700">
         <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">

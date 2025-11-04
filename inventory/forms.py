@@ -55,3 +55,12 @@ class DailyBakeryProductionForm(forms.ModelForm):
         widgets = {
             "note": forms.Textarea(attrs={"rows": 2}),
         }
+
+
+class InventoryRevisionForm(forms.Form):
+    item_type = forms.CharField(widget=forms.HiddenInput())
+    item_id = forms.IntegerField(widget=forms.HiddenInput())
+    name = forms.CharField(disabled=True, required=False)
+    current_quantity = forms.DecimalField(max_digits=12, decimal_places=3, disabled=True)
+    new_quantity = forms.DecimalField(max_digits=12, decimal_places=3)
+    note = forms.CharField(widget=forms.Textarea(attrs={'rows': 2}), required=False)
