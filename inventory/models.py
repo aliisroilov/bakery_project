@@ -177,6 +177,8 @@ class DailyBakeryProduction(models.Model):
 
     def save(self, *args, **kwargs):
         from inventory.models import BakeryProductStock
+        import logging
+        logger = logging.getLogger(__name__)
 
         # If this is update: compute delta = new - old.
         creating = self._state.adding
@@ -197,11 +199,19 @@ class DailyBakeryProduction(models.Model):
             super().save(*args, **kwargs)
 
             # Apply stock changes only on create or when quantity/date/product changed.
-            # Re-fetch actual DB row to avoid race issues (but we have self now).
-            stock = self._get_stock()
+            # Use select_for_update to prevent race conditions
+            stock, _ = BakeryProductStock.objects.select_for_update().get_or_create(
+                product=self.product,
+                defaults={"quantity": Decimal("0.000"), "pinned": True}
+            )
+            
             if creating:
                 stock.quantity = stock.quantity + self.quantity_produced
                 stock.save(update_fields=["quantity", "updated_at"])
+                logger.info(
+                    f"[PRODUCTION] Added {self.quantity_produced} to {self.product.name} stock. "
+                    f"New stock: {stock.quantity}"
+                )
             else:
                 # If old_qty is None treat as create (shouldn't happen)
                 if old_qty is None:
@@ -212,17 +222,34 @@ class DailyBakeryProduction(models.Model):
                     if delta != Decimal("0"):
                         stock.quantity = stock.quantity + delta
                         stock.save(update_fields=["quantity", "updated_at"])
+                        logger.info(
+                            f"[PRODUCTION] Updated {self.product.name}: delta={delta}, "
+                            f"new stock={stock.quantity}"
+                        )
 
     def delete(self, *args, **kwargs):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Prevent deleting confirmed record
         if self.confirmed:
             raise ValueError("Cannot delete a confirmed production record.")
 
         # Remove the produced quantity from stock (reverse what save did)
         with transaction.atomic():
-            stock = self._get_stock()
+            from inventory.models import BakeryProductStock
+            stock, _ = BakeryProductStock.objects.select_for_update().get_or_create(
+                product=self.product,
+                defaults={"quantity": Decimal("0.000"), "pinned": True}
+            )
             stock.quantity = stock.quantity - self.quantity_produced
             stock.save(update_fields=["quantity", "updated_at"])
+            
+            logger.info(
+                f"[PRODUCTION] Deleted production for {self.product.name}: "
+                f"removed {self.quantity_produced}, new stock={stock.quantity}"
+            )
+            
             super().delete(*args, **kwargs)
 
 

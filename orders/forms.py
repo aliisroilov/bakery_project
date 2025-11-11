@@ -27,8 +27,19 @@ class ConfirmDeliveryForm(forms.Form):
             initial=Decimal("0.00"),
         )
 
-    def save(self):
-        """Only update delivered quantities and status."""
+    def save(self, user=None):
+        """
+        Update delivered quantities, status, and received amount.
+        
+        Args:
+            user: The user confirming the delivery (for audit logging)
+            
+        Returns:
+            The updated order
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         all_delivered = True
         partial_delivered = False
 
@@ -52,6 +63,13 @@ class ConfirmDeliveryForm(forms.Form):
             self.order.status = "Pending"
 
         # Update received amount
-        self.order.received_amount = Decimal(self.cleaned_data["received_amount"])
+        received_amount = Decimal(self.cleaned_data["received_amount"])
+        self.order.received_amount = received_amount
         self.order.save(update_fields=["status", "received_amount"])
+        
+        logger.info(
+            f"[DELIVERY] Order #{self.order.id} confirmed by {user.username if user else 'system'}: "
+            f"status={self.order.status}, received={received_amount}"
+        )
+        
         return self.order

@@ -20,12 +20,14 @@ def order_detail(request, order_id):
     - planned_loan sums all past orders (all time) for this shop.
     - Only the current order is shown explicitly in the page.
     """
+    from orders.models import quantize_money
+    
     # Get the order and related shop
     order = get_object_or_404(Order, id=order_id)
     shop = order.shop
 
-    # Total value of the current order
-    total_order = sum(item.total_price for item in order.items.all())
+    # Total value of the current order (use Order method)
+    total_order = order.total_amount()
 
     # Use Uzbekistan timezone explicitly
     uz_tz = ZoneInfo("Asia/Tashkent")
@@ -34,8 +36,10 @@ def order_detail(request, order_id):
     # All past orders excluding current one (for planned loan calculation)
     past_orders = shop.orders.exclude(id=order.id)
 
-    # Planned loan = sum of all items in past orders
-    planned_loan = sum(item.total_price for o in past_orders for item in o.items.all())
+    # Planned loan = sum of all items in past orders with proper Decimal handling
+    planned_loan = Decimal('0.00')
+    for o in past_orders:
+        planned_loan += o.total_amount()
 
     context = {
         "order": order,
@@ -48,6 +52,11 @@ def order_detail(request, order_id):
     return render(request, "orders/order_detail.html", context)
 
 logger = logging.getLogger(__name__)
+
+
+def _is_ajax(request):
+    """Helper function to check if request is AJAX"""
+    return request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
 
 def confirm_delivery(request, order_id):
@@ -86,29 +95,87 @@ def confirm_delivery(request, order_id):
 
             except Exception as e:
                 logger.exception("Error during delivery confirmation: %s", e)
-                # handle AJAX / messages as before...
+                if _is_ajax(request):
+                    return JsonResponse({"success": False, "error": str(e)}, status=500)
+                messages.error(request, f"Xatolik yuz berdi: {str(e)}")
+                return redirect("orders:order_detail", order_id=order.id)
+        else:
+            # Form is not valid
+            if _is_ajax(request):
+                return JsonResponse({"success": False, "errors": form.errors}, status=400)
+            messages.error(request, "Iltimos, maydonlarni to'g'ri to'ldiring.")
+    else:
+        # GET request
+        form = ConfirmDeliveryForm(order=order)
+    
+    # Prepare fields for template - pair each item with its form field
+    fields = []
+    for item in order.items.all():
+        field_name = f"delivered_{item.id}"
+        if field_name in form.fields:
+            fields.append((item, form[field_name]))
+    
+    return render(request, "orders/confirm_delivery.html", {
+        "form": form, 
+        "order": order,
+        "fields": fields
+    })
 
 
 def mark_fully_delivered(request, order_id):
+    """
+    Mark an order as fully delivered and recalculate shop loan balance atomically.
+    """
+    from orders.models import quantize_money
+    
     order = get_object_or_404(Order, id=order_id)
 
-    total_delivered = sum(
-        Decimal(item.delivered_quantity or 0) * Decimal(item.unit_price or 0)
-        for item in order.items.all()
-    )
-    total_paid = sum(p.amount for p in Payment.objects.filter(order=order))
-    remaining = max(total_delivered - total_paid, Decimal(0))
+    with transaction.atomic():
+        # Lock the order and shop to prevent race conditions
+        order = Order.objects.select_for_update().get(pk=order_id)
+        shop = order.shop
+        shop = type(shop).objects.select_for_update().get(pk=shop.pk)
+        
+        # Calculate total delivered for this order
+        total_delivered = Decimal('0.00')
+        for item in order.items.all():
+            delivered_value = quantize_money(
+                Decimal(str(item.delivered_quantity or 0)) * Decimal(str(item.unit_price or 0))
+            )
+            total_delivered += delivered_value
+        
+        # Calculate total paid for this order
+        total_paid = Payment.objects.filter(order=order).aggregate(
+            total=models.Sum("amount")
+        )["total"] or Decimal('0.00')
+        
+        remaining = max(total_delivered - total_paid, Decimal('0.00'))
 
-    order.status = "Delivered"
-    order.save(update_fields=["status"])
+        # Update order status
+        order.status = "Delivered"
+        order.save(update_fields=["status"])
 
-    # SET shop loan to recalculated value (not +=)
-    # Recalculate across shop to be safe:
-    from orders.models import OrderItem
-    delivered_total_all = sum(
-        Decimal(it.delivered_quantity or 0) * Decimal(it.unit_price or 0)
-        for it in OrderItem.objects.filter(order__shop=order.shop)
-    )
-    received_total_all = sum(Decimal(p.amount or 0) for p in Payment.objects.filter(shop=order.shop))
-    order.shop.loan_balance = max(Decimal("0.00"), delivered_total_all - received_total_all)
-    order.shop.save(update_fields=["loan_balance"])
+        # Recalculate shop loan balance from scratch (single source of truth)
+        from orders.models import OrderItem
+        delivered_total_all = Decimal('0.00')
+        order_items = OrderItem.objects.filter(order__shop=shop).select_related('order')
+        
+        for item in order_items:
+            item_value = quantize_money(
+                Decimal(str(item.delivered_quantity or 0)) * Decimal(str(item.unit_price or 0))
+            )
+            delivered_total_all += item_value
+        
+        received_total_all = Payment.objects.filter(shop=shop).aggregate(
+            total=models.Sum("amount")
+        )["total"] or Decimal('0.00')
+        
+        shop.loan_balance = max(Decimal("0.00"), quantize_money(delivered_total_all - received_total_all))
+        shop.save(update_fields=["loan_balance"])
+        
+        logger.info(
+            f"[MARK_DELIVERED] Order #{order.id} marked fully delivered. "
+            f"Shop {shop.id} loan balance: {shop.loan_balance}"
+        )
+    
+    return redirect("dashboard:district_detail", region_id=shop.region.id)

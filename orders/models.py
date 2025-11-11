@@ -2,9 +2,15 @@ from django.db import models
 from shops.models import Shop
 from products.models import Product
 from django.utils import timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from dashboard.models import Payment
 from reports.models import BakeryBalance
+
+
+def quantize_money(value):
+    """Round money values to 2 decimal places using half-up rounding."""
+    return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
 
 class Order(models.Model):
     STATUS_CHOICES = [
@@ -28,8 +34,11 @@ class Order(models.Model):
         return f"Order #{self.id} - {self.shop.name}"
 
     def total_amount(self):
-        """Sum of ordered items."""
-        return sum(item.total_price for item in self.items.all())
+        """Sum of all ordered items with proper Decimal precision."""
+        total = Decimal('0.00')
+        for item in self.items.all():
+            total += quantize_money(item.total_price)
+        return total
 
     def update_status(self):
         items = self.items.all()
@@ -63,7 +72,8 @@ class OrderItem(models.Model):
 
     @property
     def total_price(self):
+        """Total price for this line item with proper Decimal precision."""
         if self.unit_price is None or self.quantity is None:
-            return 0
-        return self.unit_price * self.quantity
+            return Decimal('0.00')
+        return quantize_money(Decimal(str(self.unit_price)) * Decimal(str(self.quantity)))
 

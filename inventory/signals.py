@@ -7,30 +7,8 @@ from dashboard.models import LoanRepayment
 
 
 # ========================
-# 💰 BALANCE UPDATES
+# 💰 LOAN REPAYMENT BALANCE UPDATES
 # ========================
-
-@receiver(post_save, sender=Purchase)
-def decrease_balance_on_purchase(sender, instance, created, **kwargs):
-    """
-    Subtract the total purchase cost from BakeryBalance when a Purchase is created.
-    """
-    if created and instance.price:
-        balance = BakeryBalance.get_instance()
-        balance.amount -= Decimal(instance.price)
-        balance.save(update_fields=["amount"])
-
-
-@receiver(post_delete, sender=Purchase)
-def restore_balance_on_purchase_delete(sender, instance, **kwargs):
-    """
-    Add back the purchase cost to BakeryBalance when the Purchase is deleted.
-    """
-    if instance.price:
-        balance = BakeryBalance.get_instance()
-        balance.amount += Decimal(instance.price)
-        balance.save(update_fields=["amount"])
-
 
 @receiver(post_save, sender=LoanRepayment)
 def update_balance_on_loan(sender, instance, created, **kwargs):
@@ -55,33 +33,39 @@ def restore_balance_on_loan_delete(sender, instance, **kwargs):
 
 
 # ========================
-# 📦 INVENTORY STOCK UPDATES
+# 📦 INVENTORY STOCK & BALANCE UPDATES
 # ========================
 
 @receiver(post_save, sender=Purchase)
 def handle_purchase_creation(sender, instance, created, **kwargs):
-    """Handles both ingredient stock and bakery balance"""
+    """
+    Handles both ingredient stock increase and bakery balance decrease.
+    Called only once when a purchase is created.
+    """
     if created:
-        # Update stock
+        # Update ingredient stock
         ing = instance.ingredient
         ing.quantity += instance.quantity
         ing.save(update_fields=["quantity"])
 
-        # Update bakery balance
+        # Update bakery balance (decrease by purchase cost)
         if instance.price:
             balance = BakeryBalance.get_instance()
             balance.amount -= Decimal(instance.price)
             balance.save(update_fields=["amount"])
 
+
 @receiver(post_delete, sender=Purchase)
 def handle_purchase_deletion(sender, instance, **kwargs):
-    """Revert stock and balance on delete"""
-    # Revert stock
+    """
+    Revert ingredient stock and bakery balance when purchase is deleted.
+    """
+    # Revert ingredient stock
     ing = instance.ingredient
     ing.quantity -= instance.quantity
     ing.save(update_fields=["quantity"])
 
-    # Revert bakery balance
+    # Revert bakery balance (add back purchase cost)
     if instance.price:
         balance = BakeryBalance.get_instance()
         balance.amount += Decimal(instance.price)

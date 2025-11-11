@@ -139,17 +139,9 @@ def production_create(request):
 def daily_production_entry(request):
     form = DailyBakeryProductionForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
-        production = form.save(commit=False)
-        production.save()
-
-        # Update bakery stock
-        stock, _ = BakeryProductStock.objects.get_or_create(
-            product=production.product,
-            defaults={"quantity": Decimal("0.000"), "pinned": True}
-        )
-        stock.quantity += production.quantity_produced
-        stock.save(update_fields=["quantity"])
-
+        # Just save - the model's save() method handles stock updates automatically
+        production = form.save()
+        
         messages.success(request, "✅ Bugungi mahsulot miqdori muvaffaqiyatli kiritildi.")
         return redirect("inventory:inventory_dashboard")
 
