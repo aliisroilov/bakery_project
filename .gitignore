@@ -1,0 +1,13 @@
+# Python cache files
+__pycache__/
+*.pyc
+
+# Local database
+db.sqlite3
+
+# Coverage files
+.coverage
+
+# Virtual environment folders
+venv/
+bakery_env/
