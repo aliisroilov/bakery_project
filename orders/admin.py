@@ -1,11 +1,19 @@
 from django.contrib import admin
+from django.db import transaction
+from decimal import Decimal
 from .models import Order, OrderItem
 from .utils import process_order_payment
+from inventory.models import BakeryProductStock
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 1
     readonly_fields = ("total_price",)
+
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
@@ -19,13 +27,78 @@ class OrderAdmin(admin.ModelAdmin):
     list_per_page = 20
 
     def save_model(self, request, obj, form, change):
+        """Save order model - store previous status for comparison."""
+        if change:
+            # Store old status before saving
+            old_order = Order.objects.get(pk=obj.pk)
+            obj._old_status = old_order.status
+        else:
+            obj._old_status = None
         super().save_model(request, obj, form, change)
-        # ❌ remove process_order_payment() here — too early!
 
     def save_related(self, request, form, formsets, change):
+        """
+        Save related objects (OrderItems) and handle stock deduction + payment processing.
+        This is called after save_model and after all inlines are saved.
+        """
         super().save_related(request, form, formsets, change)
         obj = form.instance
-        if obj.status in ["Delivered", "Partially Delivered"]:
-            from .utils import process_order_payment
-            process_order_payment(obj)
-            print(f"[ADMIN] process_order_payment() called after inlines for order #{obj.id}")
+
+        # Check if order status changed to delivered/partially delivered
+        old_status = getattr(obj, '_old_status', None)
+        new_status = obj.status
+
+        if new_status in ["Delivered", "Partially Delivered"]:
+            with transaction.atomic():
+                # Track which items were delivered (to avoid duplicate deductions)
+                items_to_process = []
+
+                # If status just changed to delivered, deduct stock
+                if old_status not in ["Delivered", "Partially Delivered"]:
+                    logger.info(
+                        f"[ADMIN] Order #{obj.id} status changed from '{old_status}' to '{new_status}'. "
+                        f"Processing stock deduction."
+                    )
+
+                    # Deduct stock for all delivered items
+                    for item in obj.items.all():
+                        delivered_qty = Decimal(item.delivered_quantity or 0)
+                        if delivered_qty > 0:
+                            try:
+                                # Get or create stock entry
+                                stock, created = BakeryProductStock.objects.get_or_create(
+                                    product=item.product,
+                                    defaults={"quantity": Decimal("0.000"), "pinned": True}
+                                )
+
+                                # Deduct delivered quantity from stock
+                                old_stock_qty = stock.quantity
+                                stock.quantity -= delivered_qty
+                                stock.save(update_fields=["quantity"])
+
+                                logger.info(
+                                    f"[ADMIN] Stock deducted: {item.product.name} "
+                                    f"{old_stock_qty} - {delivered_qty} = {stock.quantity}"
+                                )
+                                items_to_process.append(item.product.name)
+
+                            except Exception as e:
+                                logger.error(
+                                    f"[ADMIN] Error deducting stock for {item.product.name}: {e}"
+                                )
+                                raise
+
+                    if items_to_process:
+                        logger.info(
+                            f"[ADMIN] Stock deducted for {len(items_to_process)} items: "
+                            f"{', '.join(items_to_process)}"
+                        )
+                else:
+                    logger.info(
+                        f"[ADMIN] Order #{obj.id} was already in '{old_status}' status. "
+                        f"Skipping stock deduction (already processed)."
+                    )
+
+                # Process payment and balance updates (always do this for delivered orders)
+                process_order_payment(obj)
+                logger.info(f"[ADMIN] Payment processed for order #{obj.id}")
