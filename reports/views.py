@@ -37,14 +37,41 @@ def shop_history(request, shop_id):
     shop = get_object_or_404(Shop, id=shop_id)
 
     # 🧾 Fetch all related data
-    orders = Order.objects.filter(shop=shop).select_related("shop").order_by("-order_date")
-    payments = Payment.objects.filter(shop=shop).order_by("-date")
+    orders = Order.objects.filter(shop=shop).select_related("shop")
+    payments = Payment.objects.filter(shop=shop)
 
-    # Optional: you can later add deliveries, returns, etc.
+    # 📋 Create unified history list (orders + payments combined)
+    history = []
+
+    # Add orders to history
+    for order in orders:
+        history.append({
+            "date": order.order_date,
+            "type": "order",
+            "status": order.status,
+            "description": f"Buyurtma #{order.id}",
+            "total_amount": order.total_amount(),
+            "received_amount": order.received_amount,
+            "order_id": order.id,
+        })
+
+    # Add payments to history
+    for payment in payments:
+        history.append({
+            "date": payment.date.date() if hasattr(payment.date, 'date') else payment.date,
+            "type": "payment",
+            "status": None,
+            "description": f"To'lov - {payment.get_payment_type_display()}",
+            "amount": payment.amount,
+            "notes": payment.notes,
+        })
+
+    # Sort by date (most recent first)
+    history.sort(key=lambda x: x["date"], reverse=True)
+
     context = {
         "shop": shop,
-        "orders": orders,
-        "payments": payments,
+        "history": history,
     }
     return render(request, "reports/shop_history.html", context)
 

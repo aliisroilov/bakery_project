@@ -2,12 +2,12 @@
 {% load humanize %}
 
 {% block content %}
-<div class="max-w-6xl mx-auto p-6">
+<div class="max-w-6xl mx-auto p-4 md:p-6">
 
     <!-- Header -->
-    <div class="flex items-center justify-between mb-8 flex-wrap gap-2">
-        <h2 class="text-3xl font-bold text-[#8A6233] tracking-tight">
-            {{ shop.name }} — To‘liq tarix
+    <div class="flex items-center justify-between mb-6 md:mb-8 flex-wrap gap-2">
+        <h2 class="text-2xl md:text-3xl font-bold text-[#8A6233] tracking-tight">
+            {{ shop.name }} — To'liq tarix
         </h2>
         <a href="{% url 'reports:contragents_report' %}"
            class="inline-flex items-center text-sm text-[#B67B3F] hover:text-[#8A6233] transition-colors">
@@ -16,77 +16,83 @@
     </div>
 
     <!-- Loan info -->
-    <div class="mb-6 text-lg">
+    <div class="mb-6 text-base md:text-lg bg-white/90 backdrop-blur-xl rounded-2xl shadow-md border border-[#E6B566]/40 p-4">
         {% if shop.loan_balance > 0 %}
             <span class="text-red-500 font-semibold">
-                Qarz miqdori: {{ shop.loan_balance|floatformat:0|intcomma }} so‘m
+                💰 Qarz miqdori: {{ shop.loan_balance|floatformat:0|intcomma }} so'm
             </span>
         {% elif shop.loan_balance == 0 %}
-            <span class="text-gray-500">Qarzi yo‘q</span>
+            <span class="text-gray-500">✅ Qarzi yo'q</span>
         {% else %}
             <span class="text-green-600 font-semibold">
-                +{{ shop.loan_balance|floatformat:0|intcomma }} so‘m
+                ✅ +{{ shop.loan_balance|floatformat:0|intcomma }} so'm
             </span>
         {% endif %}
     </div>
 
-    <!-- Orders section -->
-    <div class="mb-10">
-        <h3 class="text-2xl font-semibold text-[#8A6233] mb-4">🧾 Buyurtmalar</h3>
-        <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                    <thead class="bg-gradient-to-r from-[#FBEBD1] to-[#F5D7A1]">
-                        <tr>
-                            <th class="px-6 py-3 text-left font-semibold">Sana</th>
-                            <th class="px-6 py-3 text-left font-semibold">Holati</th>
-                            <th class="px-6 py-3 text-left font-semibold">Umumiy summa</th>
-                            <th class="px-6 py-3 text-left font-semibold">Olingan summa</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for order in orders %}
-                        <tr class="hover:bg-[#FFF9F1] transition-all">
-                            <td class="px-6 py-3 whitespace-nowrap">{{ order.order_date|date:"d.m.Y" }}</td>
-                            <td class="px-6 py-3 whitespace-nowrap">{{ order.status }}</td>
-                            <td class="px-6 py-3 whitespace-nowrap">{{ order.total_amount|floatformat:0|intcomma }} so‘m</td>
-                            <td class="px-6 py-3 whitespace-nowrap">{{ order.received_amount|floatformat:0|intcomma }} so‘m</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="4" class="px-6 py-4 text-center text-gray-500">Buyurtmalar topilmadi.</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+    <!-- Unified History Table -->
+    <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 overflow-hidden">
+        <div class="px-4 py-4 md:px-6 md:py-5 border-b border-[#E6B566]/40">
+            <h3 class="text-xl md:text-2xl font-semibold text-[#8A6233]">📜 Tarix</h3>
         </div>
-    </div>
-
-    <!-- Payments section -->
-    <div>
-        <h3 class="text-2xl font-semibold text-[#8A6233] mb-4">💳 To‘lovlar</h3>
-        <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
-                    <thead class="bg-gradient-to-r from-[#FBEBD1] to-[#F5D7A1]">
-                        <tr>
-                            <th class="px-6 py-3 text-left font-semibold">Sana</th>
-                            <th class="px-6 py-3 text-left font-semibold">To‘lov turi</th>
-                            <th class="px-6 py-3 text-left font-semibold">Summasi</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for p in payments %}
-                        <tr class="hover:bg-[#FFF9F1] transition-all">
-                            <td class="px-6 py-3 whitespace-nowrap">{{ p.date|date:"d.m.Y" }}</td>
-                            <td class="px-6 py-3 whitespace-nowrap">{{ p.get_payment_type_display }}</td>
-                            <td class="px-6 py-3 whitespace-nowrap">{{ p.amount|floatformat:0|intcomma }} so‘m</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">To‘lovlar topilmadi.</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead class="bg-gradient-to-r from-[#FBEBD1] to-[#F5D7A1]">
+                    <tr>
+                        <th class="px-3 md:px-6 py-3 text-left font-semibold text-[#8A6233] whitespace-nowrap text-xs md:text-sm">Sana</th>
+                        <th class="px-3 md:px-6 py-3 text-left font-semibold text-[#8A6233] whitespace-nowrap text-xs md:text-sm">Turi</th>
+                        <th class="px-3 md:px-6 py-3 text-left font-semibold text-[#8A6233] whitespace-nowrap text-xs md:text-sm hidden md:table-cell">Tavsif</th>
+                        <th class="px-3 md:px-6 py-3 text-left font-semibold text-[#8A6233] whitespace-nowrap text-xs md:text-sm hidden sm:table-cell">Holat</th>
+                        <th class="px-3 md:px-6 py-3 text-right font-semibold text-[#8A6233] whitespace-nowrap text-xs md:text-sm">Summa</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in history %}
+                    <tr class="hover:bg-[#FFF9F1] transition-all border-b border-[#F0E0B6]/30">
+                        <td class="px-3 md:px-6 py-3 whitespace-nowrap text-xs md:text-sm">{{ item.date|date:"d.m.Y" }}</td>
+                        <td class="px-3 md:px-6 py-3 whitespace-nowrap text-xs md:text-sm">
+                            {% if item.type == "order" %}
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                    📦 Buyurtma
+                                </span>
+                            {% else %}
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                    💳 To'lov
+                                </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 md:px-6 py-3 text-xs md:text-sm hidden md:table-cell">{{ item.description }}</td>
+                        <td class="px-3 md:px-6 py-3 whitespace-nowrap text-xs md:text-sm hidden sm:table-cell">
+                            {% if item.status %}
+                                <span class="{% if item.status == 'Delivered' %}text-green-600{% elif item.status == 'Partially Delivered' %}text-yellow-600{% else %}text-gray-600{% endif %} font-medium">
+                                    {{ item.status }}
+                                </span>
+                            {% else %}
+                                <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 md:px-6 py-3 whitespace-nowrap text-right text-xs md:text-sm">
+                            {% if item.type == "order" %}
+                                <div class="flex flex-col items-end">
+                                    <span class="font-semibold text-[#8A6233]">{{ item.total_amount|floatformat:0|intcomma }} so'm</span>
+                                    {% if item.received_amount > 0 %}
+                                        <span class="text-xs text-green-600">Olindi: {{ item.received_amount|floatformat:0|intcomma }}</span>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="font-semibold text-green-600">+{{ item.amount|floatformat:0|intcomma }} so'm</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-8 text-center text-gray-500">
+                            Tarix topilmadi.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>

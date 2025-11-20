@@ -30,41 +30,43 @@
     </form>
 
     <!-- Purchases Table -->
-    <div class="overflow-x-auto bg-white rounded-2xl shadow-lg">
-        <table class="w-full min-w-[700px] border-collapse text-base">
-            <thead class="bg-orange-100">
-                <tr>
-                    <th class="px-6 py-3 border text-left">Category</th>
-                    <th class="px-6 py-3 border text-left">Item Name</th>
-                    <th class="px-6 py-3 border text-left">Price</th>
-                    <th class="px-6 py-3 border text-left">Notes</th>
-                    <th class="px-6 py-3 border text-left">Purchase Date</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for category, items in purchases_by_category.items %}
-                    {% for p in items %}
-                        <tr class="hover:bg-orange-50 transition">
-                            <td class="px-6 py-3 border">{{ category }}</td>
-                            <td class="px-6 py-3 border">{{ p.item_name }}</td>
-                            <td class="px-6 py-3 border text-green-700 font-semibold">{{ p.unit_price }}</td>
-                            <td class="px-6 py-3 border">{% if p.notes %}{{ p.notes }}{% else %}-{% endif %}</td>
-                            <td class="px-6 py-3 border">{{ p.purchase_date }}</td>
+    <div class="bg-white rounded-2xl shadow-lg overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-sm md:text-base">
+                <thead class="bg-orange-100">
+                    <tr>
+                        <th class="px-3 md:px-6 py-3 border text-left whitespace-nowrap">Category</th>
+                        <th class="px-3 md:px-6 py-3 border text-left whitespace-nowrap">Item Name</th>
+                        <th class="px-3 md:px-6 py-3 border text-left whitespace-nowrap">Price</th>
+                        <th class="px-3 md:px-6 py-3 border text-left whitespace-nowrap hidden md:table-cell">Notes</th>
+                        <th class="px-3 md:px-6 py-3 border text-left whitespace-nowrap">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for category, items in purchases_by_category.items %}
+                        {% for p in items %}
+                            <tr class="hover:bg-orange-50 transition">
+                                <td class="px-3 md:px-6 py-3 border whitespace-nowrap">{{ category }}</td>
+                                <td class="px-3 md:px-6 py-3 border">{{ p.item_name }}</td>
+                                <td class="px-3 md:px-6 py-3 border text-green-700 font-semibold whitespace-nowrap">{{ p.unit_price }}</td>
+                                <td class="px-3 md:px-6 py-3 border hidden md:table-cell">{% if p.notes %}{{ p.notes }}{% else %}-{% endif %}</td>
+                                <td class="px-3 md:px-6 py-3 border whitespace-nowrap">{{ p.purchase_date|date:"d.m.Y" }}</td>
+                            </tr>
+                        {% endfor %}
+                    {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center py-6 text-gray-500">No purchases found.</td>
                         </tr>
                     {% endfor %}
-                {% empty %}
+                </tbody>
+                <tfoot class="bg-orange-100 font-semibold">
                     <tr>
-                        <td colspan="5" class="text-center py-6 text-gray-500">No purchases found.</td>
+                        <td colspan="2" class="px-3 md:px-6 py-3 border text-right whitespace-nowrap">Total Spent:</td>
+                        <td colspan="3" class="px-3 md:px-6 py-3 border text-green-800 whitespace-nowrap">{{ total_cost }}</td>
                     </tr>
-                {% endfor %}
-            </tbody>
-            <tfoot class="bg-orange-100 font-semibold">
-                <tr>
-                    <td colspan="2" class="px-6 py-3 border text-right">Total Spent:</td>
-                    <td colspan="3" class="px-6 py-3 border text-green-800">{{ total_cost }}</td>
-                </tr>
-            </tfoot>
-        </table>
+                </tfoot>
+            </table>
+        </div>
     </div>
 </div>
 {% endblock %}
