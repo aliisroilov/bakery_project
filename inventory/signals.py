@@ -6,9 +6,6 @@ from .models import Purchase
 from dashboard.models import LoanRepayment
 
 
-# ========================
-# 💰 LOAN REPAYMENT BALANCE UPDATES
-# ========================
 
 @receiver(post_save, sender=LoanRepayment)
 def update_balance_on_loan(sender, instance, created, **kwargs):

@@ -112,7 +112,7 @@ def dashboard_view(request):
 
 
 # --- DISTRICTS OVERVIEW ---
-@login_required
+@login_required 
 def districts_view(request):
     """Show per-district delivery statistics for today."""
     today = timezone.now().date()
