@@ -7,15 +7,30 @@
 
   <!-- 🏷️ Header -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-10">
-    <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] drop-shadow-sm mb-4 sm:mb-0">
-      Inventory Revision
-    </h1>
+    <div>
+      <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] drop-shadow-sm mb-2">
+        Inventory Revision
+      </h1>
+      <p class="text-sm text-gray-600">
+        📦 Jami: {{ total_items }} ta element ({{ ingredient_count }} ingredient, {{ product_count }} mahsulot)
+      </p>
+    </div>
+    <a href="{% url 'inventory:inventory_dashboard' %}"
+       class="inline-flex items-center px-4 py-2 bg-white border border-[#E6B566] text-[#8A6233] rounded-xl hover:bg-[#FFF9F1] transition-all">
+      ← Orqaga qaytish
+    </a>
   </div>
 
   <!-- 📝 Inventory Revision Form -->
   <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8">
-    <h2 class="text-2xl font-bold text-[#8A6233] mb-5">Update Stock Quantities</h2>
-    <form method="POST">
+    <div class="flex items-center justify-between mb-5">
+      <h2 class="text-2xl font-bold text-[#8A6233]">Update Stock Quantities</h2>
+      <div class="text-sm text-gray-600">
+        💡 Faqat o'zgartirilgan miqdorlar saqlanadi
+      </div>
+    </div>
+
+    <form method="POST" id="revisionForm">
       {% csrf_token %}
       {{ formset.management_form }}
 
@@ -27,49 +42,60 @@
 
       <div class="overflow-x-auto">
         <table class="w-full text-sm text-left text-gray-700 border-collapse">
-          <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
+          <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs sticky top-0">
             <tr>
-              <th class="px-4 py-3">Item</th>
-              <th class="px-4 py-3 text-right">Current Quantity</th>
-              <th class="px-4 py-3 text-right">New Quantity</th>
-              <th class="px-4 py-3 text-left">Note</th>
+              <th class="px-4 py-3 whitespace-nowrap">Element</th>
+              <th class="px-4 py-3 text-right whitespace-nowrap">Joriy miqdor</th>
+              <th class="px-4 py-3 text-right whitespace-nowrap">Yangi miqdor</th>
+              <th class="px-4 py-3 text-left whitespace-nowrap">Izoh (ixtiyoriy)</th>
             </tr>
           </thead>
           <tbody>
             {% for form in formset %}
-            <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
+            <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all {% if forloop.counter0|divisibleby:2 %}bg-gray-50/50{% endif %}">
               <td class="px-4 py-2 font-semibold">
                 {{ form.item_type }}
                 {{ form.item_id }}
-                {{ form.name|add_class:"border-0 bg-transparent font-semibold text-gray-800 w-full" }}
+                {{ form.name|add_class:"border-0 bg-transparent font-semibold text-gray-800 w-full cursor-not-allowed" }}
               </td>
               <td class="px-4 py-2 text-right">
-                {{ form.current_quantity|add_class:"border-0 bg-transparent text-right w-24" }}
+                {{ form.current_quantity|add_class:"border-0 bg-gray-50 text-right w-24 text-gray-600 font-mono cursor-not-allowed" }}
               </td>
               <td class="px-4 py-2 text-right">
-                {{ form.new_quantity|add_class:"border rounded-xl px-3 py-1 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-24 text-right" }}
+                {{ form.new_quantity|add_class:"border-2 rounded-xl px-3 py-2 focus:ring-2 focus:ring-[#B67B3F] focus:border-[#B67B3F] focus:outline-none w-28 text-right font-mono" }}
                 {% if form.new_quantity.errors %}
-                  <div class="text-red-500 text-xs mt-1">{{ form.new_quantity.errors }}</div>
+                  <div class="text-red-500 text-xs mt-1">{{ form.new_quantity.errors.0 }}</div>
                 {% endif %}
               </td>
               <td class="px-4 py-2">
-                {{ form.note|add_class:"border rounded-xl px-3 py-1 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-full" }}
+                {{ form.note|add_class:"border rounded-xl px-3 py-2 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-full text-sm" }}
               </td>
             </tr>
             {% empty %}
             <tr>
-              <td colspan="4" class="text-center py-4 text-gray-400">No items available for revision.</td>
+              <td colspan="4" class="text-center py-8 text-gray-400">
+                📭 Hech qanday element topilmadi
+              </td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
 
-      <div class="mt-6 flex justify-end">
-        <button type="submit"
-                class="bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] text-white px-6 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 font-semibold">
-          ✅ Save Revisions
-        </button>
+      <div class="mt-6 flex items-center justify-between">
+        <div class="text-sm text-gray-600">
+          ⚠️ Barcha o'zgarishlar audit logga yoziladi
+        </div>
+        <div class="flex gap-3">
+          <a href="{% url 'inventory:inventory_dashboard' %}"
+             class="px-5 py-2.5 border-2 border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition-all font-semibold">
+            Bekor qilish
+          </a>
+          <button type="submit"
+                  class="bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] text-white px-6 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 font-semibold">
+            ✅ Saqlash
+          </button>
+        </div>
       </div>
     </form>
   </div>

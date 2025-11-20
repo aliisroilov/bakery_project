@@ -58,9 +58,43 @@ class DailyBakeryProductionForm(forms.ModelForm):
 
 
 class InventoryRevisionForm(forms.Form):
+    """Form for manual inventory revision - adjusting stock quantities."""
     item_type = forms.CharField(widget=forms.HiddenInput())
     item_id = forms.IntegerField(widget=forms.HiddenInput())
-    name = forms.CharField(disabled=True, required=False)
-    current_quantity = forms.DecimalField(max_digits=12, decimal_places=3, disabled=True)
-    new_quantity = forms.DecimalField(max_digits=12, decimal_places=3)
-    note = forms.CharField(widget=forms.Textarea(attrs={'rows': 2}), required=False)
+    name = forms.CharField(
+        required=False,
+        widget=forms.TextInput(attrs={
+            'readonly': 'readonly',
+            'class': 'cursor-not-allowed bg-gray-50'
+        })
+    )
+    current_quantity = forms.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        required=False,
+        widget=forms.NumberInput(attrs={
+            'readonly': 'readonly',
+            'class': 'cursor-not-allowed bg-gray-50'
+        })
+    )
+    new_quantity = forms.DecimalField(
+        max_digits=12,
+        decimal_places=3,
+        min_value=0,
+        widget=forms.NumberInput(attrs={
+            'step': '0.001',
+            'min': '0'
+        })
+    )
+    note = forms.CharField(
+        widget=forms.Textarea(attrs={'rows': 2}),
+        required=False,
+        help_text='Optional: Explain why the quantity is being changed'
+    )
+
+    def clean_new_quantity(self):
+        """Validate new quantity is non-negative."""
+        new_qty = self.cleaned_data.get('new_quantity')
+        if new_qty is not None and new_qty < 0:
+            raise forms.ValidationError("Miqdor manfiy bo'lishi mumkin emas!")
+        return new_qty

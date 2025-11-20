@@ -164,14 +164,25 @@ def production_delete(request, pk):
 def inventory_revision(request):
     """
     Manual inventory revision - update quantities for ingredients and products.
-    Creates audit trail in InventoryRevisionReport.
+    Creates comprehensive audit trail in InventoryRevisionReport.
+
+    Features:
+    - Displays all ingredients and bakery products
+    - Allows quantity adjustments with notes
+    - Creates audit trail for all changes
+    - Atomic transaction ensures data consistency
+    - Validates quantities are non-negative
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     # Prepare initial data for formset
     ingredients = Ingredient.objects.all().order_by('name')
     bakery_stocks = BakeryProductStock.objects.select_related('product').all().order_by('product__name')
 
     initial_data = []
 
+    # Add all ingredients
     for ing in ingredients:
         initial_data.append({
             'item_type': 'ingredient',
@@ -181,6 +192,7 @@ def inventory_revision(request):
             'new_quantity': ing.quantity,
         })
 
+    # Add all bakery product stocks
     for stock in bakery_stocks:
         initial_data.append({
             'item_type': 'product',
@@ -194,53 +206,104 @@ def inventory_revision(request):
 
     if request.method == 'POST':
         formset = RevisionFormSet(request.POST)
+
         if formset.is_valid():
             updated_count = 0
+            errors = []
 
             with transaction.atomic():
                 for form in formset:
                     item_type = form.cleaned_data.get('item_type')
                     item_id = form.cleaned_data.get('item_id')
                     new_qty = form.cleaned_data.get('new_quantity')
-                    note = form.cleaned_data.get('note', '')
+                    note = form.cleaned_data.get('note', '').strip()
 
-                    if not item_type or not item_id:
+                    # Skip if essential data is missing
+                    if not item_type or not item_id or new_qty is None:
                         continue
 
                     try:
+                        # Get the item with row-level lock
                         if item_type == 'ingredient':
-                            item = Ingredient.objects.get(id=item_id)
-                        else:
-                            item = BakeryProductStock.objects.get(product_id=item_id)
+                            item = Ingredient.objects.select_for_update().get(id=item_id)
+                            item_name = item.name
+                        else:  # product
+                            stock = BakeryProductStock.objects.select_for_update().get(product_id=item_id)
+                            item = stock
+                            item_name = stock.product.name
 
+                        # Get old quantity
                         old_qty = item.quantity
+
+                        # Only update if quantity changed
                         if Decimal(str(new_qty)) != old_qty:
+                            # Validate quantity is non-negative
+                            if new_qty < 0:
+                                errors.append(f"{item_name}: Miqdor manfiy bo'lishi mumkin emas")
+                                continue
+
+                            # Update quantity
                             item.quantity = Decimal(str(new_qty))
                             item.save(update_fields=['quantity'])
 
+                            # Create audit log
                             InventoryRevisionReport.objects.create(
                                 item_type=item_type,
                                 ingredient=item if item_type == 'ingredient' else None,
-                                product=item.product if item_type == 'product' else None,
+                                product=stock.product if item_type == 'product' else None,
                                 old_quantity=old_qty,
                                 new_quantity=Decimal(str(new_qty)),
-                                note=note,
+                                note=note or f"Qo'lda o'zgartirildi: {old_qty} → {new_qty}",
                                 user=request.user
                             )
                             updated_count += 1
-                    except (Ingredient.DoesNotExist, BakeryProductStock.DoesNotExist) as e:
-                        messages.error(request, f"Xatolik: {str(e)}")
+                            logger.info(
+                                f"Inventory revised: {item_type} '{item_name}' "
+                                f"{old_qty} → {new_qty} by {request.user.username}"
+                            )
+
+                    except Ingredient.DoesNotExist:
+                        errors.append(f"Ingredient ID {item_id} topilmadi")
+                        logger.error(f"Ingredient {item_id} not found during revision")
+                        continue
+                    except BakeryProductStock.DoesNotExist:
+                        errors.append(f"Product stock ID {item_id} topilmadi")
+                        logger.error(f"Product stock {item_id} not found during revision")
+                        continue
+                    except Exception as e:
+                        errors.append(f"Xatolik: {str(e)}")
+                        logger.exception(f"Error during inventory revision: {e}")
                         continue
 
+            # Show appropriate messages
+            if errors:
+                for error in errors:
+                    messages.error(request, f"❌ {error}")
+
             if updated_count > 0:
-                messages.success(request, f"✅ {updated_count} ta element muvaffaqiyatli yangilandi!")
-            else:
+                messages.success(
+                    request,
+                    f"✅ {updated_count} ta element muvaffaqiyatli yangilandi va audit log yaratildi!"
+                )
+            elif not errors:
                 messages.info(request, "ℹ️ Hech qanday o'zgarish kiritilmadi.")
 
             return redirect('inventory:inventory_revision')
         else:
-            messages.error(request, "❌ Formada xatoliklar mavjud. Iltimos, tekshiring.")
+            # Form validation errors
+            messages.error(request, "❌ Formada xatoliklar mavjud. Iltimos, qizil rangdagi maydonlarni tekshiring.")
+            # Log formset errors for debugging
+            for i, form in enumerate(formset):
+                if form.errors:
+                    logger.error(f"Revision form {i} errors: {form.errors}")
     else:
+        # GET request - create fresh formset
         formset = RevisionFormSet(initial=initial_data)
 
-    return render(request, 'inventory/inventory_revision.html', {'formset': formset})
+    context = {
+        'formset': formset,
+        'total_items': len(initial_data),
+        'ingredient_count': ingredients.count(),
+        'product_count': bakery_stocks.count(),
+    }
+    return render(request, 'inventory/inventory_revision.html', context)
