@@ -25,10 +25,14 @@ def restore_balance_on_purchase_delete(sender, instance, **kwargs):
     balance.save(update_fields=["amount"])
 
 
-@receiver(post_save, sender=Payment)
-def increase_balance_on_payment(sender, instance, created, **kwargs):
-    """Increase balance when money is collected."""
-    if created:
-        balance = BakeryBalance.get_instance()
-        balance.amount += instance.amount
-        balance.save(update_fields=["amount"])
+# REMOVED: Payment signal that caused double-counting
+# BakeryBalance is now updated by process_order_payment() which recalculates
+# from ALL payments, preventing double-counting issues.
+#
+# @receiver(post_save, sender=Payment)
+# def increase_balance_on_payment(sender, instance, created, **kwargs):
+#     """Increase balance when money is collected."""
+#     if created:
+#         balance = BakeryBalance.get_instance()
+#         balance.amount += instance.amount
+#         balance.save(update_fields=["amount"])

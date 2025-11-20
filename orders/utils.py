@@ -14,51 +14,13 @@ def quantize_money(value):
     return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
-def process_order_payment(order):
+def recalculate_shop_loan_balance(shop):
     """
-    Process payment for an order and update all related financial records atomically.
-    
-    This function:
-    1. Creates/updates a Payment record for the order
-    2. Updates BakeryBalance to match sum of all payments
-    3. Recalculates shop loan balance
-    
-    All operations are idempotent and use proper Decimal precision.
+    Recalculate shop loan balance from all delivered orders and all payments.
+
+    Loan balance = Total delivered value - Total payments received
+    This is the single source of truth for shop loan calculations.
     """
-    logger.info(
-        f"[PROCESS] Starting payment process for order #{order.id}, "
-        f"status={order.status}, received={order.received_amount}"
-    )
-
-    shop = order.shop
-    received = quantize_money(order.received_amount or 0)
-
-    # Create or update payment (idempotent)
-    payment, created = Payment.objects.update_or_create(
-        order=order,
-        defaults={
-            "shop": shop,
-            "amount": received,
-            "payment_type": "collection",
-            "date": timezone.now(),
-        },
-    )
-    
-    action = "created" if created else "updated"
-    logger.info(f"[PROCESS] Payment {action}: #{payment.id}, amount={payment.amount}")
-
-    # Update BakeryBalance to sum of ALL payments
-    total_received = Payment.objects.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-    total_received = quantize_money(total_received)
-    
-    logger.info(f"[PROCESS] Total bakery received across all payments: {total_received}")
-
-    balance = BakeryBalance.get_instance()
-    balance.amount = total_received
-    balance.save(update_fields=["amount"])
-    logger.info(f"[PROCESS] BakeryBalance updated to {balance.amount}")
-
-    # Recalculate shop loan balance
     # delivered_total = sum of (delivered_quantity * unit_price) for delivered/partial orders
     delivered_agg = (
         OrderItem.objects.filter(
@@ -84,8 +46,78 @@ def process_order_payment(order):
 
     shop.loan_balance = new_balance
     shop.save(update_fields=["loan_balance"])
-    
+
     logger.info(
-        f"[PROCESS] Shop {shop.id} ({shop.name}) loan balance updated: "
+        f"[RECALC] Shop {shop.id} ({shop.name}) loan balance updated: "
         f"delivered={delivered_total}, received={received_total}, loan={shop.loan_balance}"
     )
+
+    return new_balance
+
+
+def process_order_payment(order):
+    """
+    Process payment for an order and update all related financial records atomically.
+
+    This function:
+    1. Creates/updates a Payment record for the order
+    2. Updates BakeryBalance incrementally (preserving purchases and manual adjustments)
+    3. Recalculates shop loan balance
+
+    All operations are idempotent and use proper Decimal precision.
+    """
+    logger.info(
+        f"[PROCESS] Starting payment process for order #{order.id}, "
+        f"status={order.status}, received={order.received_amount}"
+    )
+
+    shop = order.shop
+    received = quantize_money(order.received_amount or 0)
+
+    # Check if payment already exists to avoid double-counting
+    try:
+        existing_payment = Payment.objects.get(order=order)
+        old_amount = quantize_money(existing_payment.amount)
+
+        # Only update if amount changed
+        if old_amount != received:
+            amount_difference = received - old_amount
+            existing_payment.amount = received
+            existing_payment.date = timezone.now()
+            existing_payment.save(update_fields=["amount", "date"])
+
+            # Adjust balance by the difference only
+            balance = BakeryBalance.get_instance()
+            balance.amount += amount_difference
+            balance.save(update_fields=["amount"])
+
+            logger.info(
+                f"[PROCESS] Payment updated: #{existing_payment.id}, "
+                f"old={old_amount}, new={received}, diff={amount_difference}, "
+                f"balance={balance.amount}"
+            )
+        else:
+            logger.info(f"[PROCESS] Payment unchanged: #{existing_payment.id}, amount={received}")
+
+    except Payment.DoesNotExist:
+        # Create new payment and increment balance
+        payment = Payment.objects.create(
+            order=order,
+            shop=shop,
+            amount=received,
+            payment_type="collection",
+            date=timezone.now(),
+        )
+
+        # Increment balance (don't reset - preserves purchases and manual adjustments!)
+        balance = BakeryBalance.get_instance()
+        balance.amount += received
+        balance.save(update_fields=["amount"])
+
+        logger.info(
+            f"[PROCESS] Payment created: #{payment.id}, amount={received}, "
+            f"balance={balance.amount}"
+        )
+
+    # Recalculate shop loan balance using centralized function
+    recalculate_shop_loan_balance(shop)

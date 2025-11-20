@@ -170,17 +170,29 @@ def loan_repayment_view(request):
             shop = form.cleaned_data["shop"]
             amount = Decimal(form.cleaned_data["amount"])
 
-            # Reduce loan balance
-            if shop.loan_balance >= amount:
-                shop.loan_balance -= amount
-            else:
-                shop.loan_balance = 0
-            shop.save()
+            # Use atomic transaction to prevent race conditions
+            from django.db import transaction
+            from orders.utils import recalculate_shop_loan_balance
 
-            # Create LoanRepayment (signal will handle BakeryBalance)
-            LoanRepayment.objects.create(shop=shop, amount=amount)
+            with transaction.atomic():
+                # Lock shop row for update
+                shop = Shop.objects.select_for_update().get(pk=shop.pk)
 
-            messages.success(request, f"{shop.name} uchun {amount} so‘m qarz to‘landi.")
+                # Create LoanRepayment (signal will handle BakeryBalance)
+                LoanRepayment.objects.create(shop=shop, amount=amount)
+
+                # Create Payment record for the loan repayment
+                Payment.objects.create(
+                    shop=shop,
+                    amount=amount,
+                    payment_type="loan_repayment",
+                    date=timezone.now()
+                )
+
+                # Recalculate shop loan balance correctly from ALL orders and payments
+                recalculate_shop_loan_balance(shop)
+
+            messages.success(request, f"{shop.name} uchun {amount} so'm qarz to'landi.")
             return redirect("dashboard:loan_repayment")
     else:
         form = LoanRepaymentForm()
