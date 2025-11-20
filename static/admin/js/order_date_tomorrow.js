@@ -16,10 +16,11 @@
         const todayLinks = document.querySelectorAll('.datetimeshortcuts a');
 
         todayLinks.forEach(function(link) {
-            // Check if this is the "Today" link for order_date field
-            if (link.textContent.trim() === 'Today' && link.getAttribute('href') === '#') {
-                // Change text to "Tomorrow"
-                link.textContent = 'Tomorrow';
+            // Check if this is the "Today" link (supports both English and Uzbek)
+            const linkText = link.textContent.trim();
+            if ((linkText === 'Today' || linkText === 'Bugun') && link.getAttribute('href') === '#') {
+                // Change text to "Tomorrow" (Ertaga in Uzbek)
+                link.textContent = 'Ertaga';
 
                 // Override click behavior to set tomorrow's date
                 link.addEventListener('click', function(e) {
