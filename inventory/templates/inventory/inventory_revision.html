@@ -15,43 +15,58 @@
   <!-- 📝 Inventory Revision Form -->
   <div class="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl border border-[#E6B566]/40 hover:border-[#B67B3F]/50 transition-all p-8">
     <h2 class="text-2xl font-bold text-[#8A6233] mb-5">Update Stock Quantities</h2>
-    <form method="POST" class="overflow-x-auto">
+    <form method="POST">
       {% csrf_token %}
+      {{ formset.management_form }}
 
-      <table class="w-full text-sm text-left text-gray-700 border-collapse">
-        <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
-          <tr>
-            <th class="px-4 py-3">Item</th>
-            <th class="px-4 py-3 text-right">Current Quantity</th>
-            <th class="px-4 py-3 text-right">New Quantity</th>
-            <th class="px-4 py-3 text-left">Note</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for form in formset %}
-          <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
-            <td class="px-4 py-2 font-semibold">
-              {{ form.name.value }}
-              {{ form.item_type }}{{ form.item_id }} {# hidden fields #}
-            </td>
-            <td class="px-4 py-2 text-right">{{ form.current_quantity.value }}</td>
-            <td class="px-4 py-2 text-right">
-              {{ form.new_quantity|add_class:"border rounded-xl px-3 py-1 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-24 text-right" }}
-            </td>
-            <td class="px-4 py-2">
-              {{ form.note|add_class:"border rounded-xl px-3 py-1 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-full" }}
-            </td>
-          </tr>
-          {% empty %}
-          <tr>
-            <td colspan="4" class="text-center py-4 text-gray-400">No items available for revision.</td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      {% if formset.non_form_errors %}
+        <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-4">
+          {{ formset.non_form_errors }}
+        </div>
+      {% endif %}
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm text-left text-gray-700 border-collapse">
+          <thead class="bg-[#F6C87B]/30 text-[#8A6233] uppercase text-xs">
+            <tr>
+              <th class="px-4 py-3">Item</th>
+              <th class="px-4 py-3 text-right">Current Quantity</th>
+              <th class="px-4 py-3 text-right">New Quantity</th>
+              <th class="px-4 py-3 text-left">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for form in formset %}
+            <tr class="border-b border-[#F1E3C2] hover:bg-[#FFF8E5] transition-all">
+              <td class="px-4 py-2 font-semibold">
+                {{ form.item_type }}
+                {{ form.item_id }}
+                {{ form.name|add_class:"border-0 bg-transparent font-semibold text-gray-800 w-full" }}
+              </td>
+              <td class="px-4 py-2 text-right">
+                {{ form.current_quantity|add_class:"border-0 bg-transparent text-right w-24" }}
+              </td>
+              <td class="px-4 py-2 text-right">
+                {{ form.new_quantity|add_class:"border rounded-xl px-3 py-1 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-24 text-right" }}
+                {% if form.new_quantity.errors %}
+                  <div class="text-red-500 text-xs mt-1">{{ form.new_quantity.errors }}</div>
+                {% endif %}
+              </td>
+              <td class="px-4 py-2">
+                {{ form.note|add_class:"border rounded-xl px-3 py-1 focus:ring-2 focus:ring-[#B67B3F] focus:outline-none w-full" }}
+              </td>
+            </tr>
+            {% empty %}
+            <tr>
+              <td colspan="4" class="text-center py-4 text-gray-400">No items available for revision.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
 
       <div class="mt-6 flex justify-end">
-        <button type="submit" 
+        <button type="submit"
                 class="bg-gradient-to-r from-[#B67B3F] to-[#F6C87B] text-white px-6 py-2.5 rounded-xl shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5 font-semibold">
           ✅ Save Revisions
         </button>

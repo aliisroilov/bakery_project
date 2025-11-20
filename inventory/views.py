@@ -162,9 +162,13 @@ def production_delete(request, pk):
 
 
 def inventory_revision(request):
+    """
+    Manual inventory revision - update quantities for ingredients and products.
+    Creates audit trail in InventoryRevisionReport.
+    """
     # Prepare initial data for formset
-    ingredients = Ingredient.objects.all()
-    bakery_stocks = BakeryProductStock.objects.select_related('product').all()
+    ingredients = Ingredient.objects.all().order_by('name')
+    bakery_stocks = BakeryProductStock.objects.select_related('product').all().order_by('product__name')
 
     initial_data = []
 
@@ -187,34 +191,55 @@ def inventory_revision(request):
         })
 
     RevisionFormSet = formset_factory(InventoryRevisionForm, extra=0)
+
     if request.method == 'POST':
         formset = RevisionFormSet(request.POST)
         if formset.is_valid():
-            for form in formset:
-                item_type = form.cleaned_data['item_type']
-                item_id = form.cleaned_data['item_id']
-                new_qty = form.cleaned_data['new_quantity']
-                note = form.cleaned_data.get('note', '')
+            updated_count = 0
 
-                if item_type == 'ingredient':
-                    item = Ingredient.objects.get(id=item_id)
-                else:
-                    item = BakeryProductStock.objects.get(product_id=item_id)
+            with transaction.atomic():
+                for form in formset:
+                    item_type = form.cleaned_data.get('item_type')
+                    item_id = form.cleaned_data.get('item_id')
+                    new_qty = form.cleaned_data.get('new_quantity')
+                    note = form.cleaned_data.get('note', '')
 
-                old_qty = item.quantity
-                if Decimal(new_qty) != old_qty:
-                    item.quantity = Decimal(new_qty)
-                    item.save(update_fields=['quantity'])
-                    InventoryRevisionReport.objects.create(
-                        item_type=item_type,
-                        ingredient=item if item_type == 'ingredient' else None,
-                        product=item.product if item_type == 'product' else None,
-                        old_quantity=old_qty,
-                        new_quantity=Decimal(new_qty),
-                        note=note,
-                        user=request.user
-                    )
+                    if not item_type or not item_id:
+                        continue
+
+                    try:
+                        if item_type == 'ingredient':
+                            item = Ingredient.objects.get(id=item_id)
+                        else:
+                            item = BakeryProductStock.objects.get(product_id=item_id)
+
+                        old_qty = item.quantity
+                        if Decimal(str(new_qty)) != old_qty:
+                            item.quantity = Decimal(str(new_qty))
+                            item.save(update_fields=['quantity'])
+
+                            InventoryRevisionReport.objects.create(
+                                item_type=item_type,
+                                ingredient=item if item_type == 'ingredient' else None,
+                                product=item.product if item_type == 'product' else None,
+                                old_quantity=old_qty,
+                                new_quantity=Decimal(str(new_qty)),
+                                note=note,
+                                user=request.user
+                            )
+                            updated_count += 1
+                    except (Ingredient.DoesNotExist, BakeryProductStock.DoesNotExist) as e:
+                        messages.error(request, f"Xatolik: {str(e)}")
+                        continue
+
+            if updated_count > 0:
+                messages.success(request, f"✅ {updated_count} ta element muvaffaqiyatli yangilandi!")
+            else:
+                messages.info(request, "ℹ️ Hech qanday o'zgarish kiritilmadi.")
+
             return redirect('inventory:inventory_revision')
+        else:
+            messages.error(request, "❌ Formada xatoliklar mavjud. Iltimos, tekshiring.")
     else:
         formset = RevisionFormSet(initial=initial_data)
 
