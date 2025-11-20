@@ -1,6 +1,9 @@
 from django.contrib import admin
 from django.db import transaction
+from django.forms import ModelForm
 from decimal import Decimal
+from datetime import timedelta
+from django.utils import timezone
 from .models import Order, OrderItem
 from .utils import process_order_payment
 from inventory.models import BakeryProductStock
@@ -15,8 +18,27 @@ class OrderItemInline(admin.TabularInline):
     readonly_fields = ("total_price",)
 
 
+class OrderAdminForm(ModelForm):
+    """Custom form for Order admin with tomorrow as default date."""
+
+    class Meta:
+        model = Order
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Set default order_date to tomorrow if creating new order
+        if not self.instance.pk:
+            tomorrow = timezone.now().date() + timedelta(days=1)
+            self.fields['order_date'].initial = tomorrow
+
+    class Media:
+        js = ('admin/js/order_date_tomorrow.js',)
+
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
+    form = OrderAdminForm
     list_display = ("id", "shop", "order_date", "status", "received_amount", "created_at")
     list_filter = ("status", "order_date")
     search_fields = ("shop__name",)
