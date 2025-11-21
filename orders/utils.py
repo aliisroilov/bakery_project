@@ -62,9 +62,10 @@ def process_order_payment(order):
     This function:
     1. Creates/updates a Payment record for the order
     2. Updates BakeryBalance incrementally (preserving purchases and manual adjustments)
-    3. Recalculates shop loan balance
+    3. Updates shop loan balance incrementally (preserving manual adjustments)
 
     All operations are idempotent and use proper Decimal precision.
+    IMPORTANT: Uses INCREMENTAL updates to preserve manual balance adjustments!
     """
     logger.info(
         f"[PROCESS] Starting payment process for order #{order.id}, "
@@ -73,6 +74,12 @@ def process_order_payment(order):
 
     shop = order.shop
     received = quantize_money(order.received_amount or 0)
+
+    # Calculate total order value (delivered items)
+    delivered_total = sum(
+        quantize_money(item.delivered_quantity or 0) * quantize_money(item.unit_price or 0)
+        for item in order.items.all()
+    )
 
     # Check if payment already exists to avoid double-counting
     try:
@@ -86,21 +93,26 @@ def process_order_payment(order):
             existing_payment.date = timezone.now()
             existing_payment.save(update_fields=["amount", "date"])
 
-            # Adjust balance by the difference only
+            # Adjust BakeryBalance by the difference only
             balance = BakeryBalance.get_instance()
             balance.amount += amount_difference
             balance.save(update_fields=["amount"])
 
+            # Adjust shop loan by the difference (payment increased = loan decreased)
+            shop.loan_balance -= amount_difference
+            shop.loan_balance = max(Decimal("0.00"), shop.loan_balance)
+            shop.save(update_fields=["loan_balance"])
+
             logger.info(
                 f"[PROCESS] Payment updated: #{existing_payment.id}, "
                 f"old={old_amount}, new={received}, diff={amount_difference}, "
-                f"balance={balance.amount}"
+                f"bakery_balance={balance.amount}, shop_loan={shop.loan_balance}"
             )
         else:
             logger.info(f"[PROCESS] Payment unchanged: #{existing_payment.id}, amount={received}")
 
     except Payment.DoesNotExist:
-        # Create new payment and increment balance
+        # Create new payment and update balances incrementally
         payment = Payment.objects.create(
             order=order,
             shop=shop,
@@ -109,15 +121,20 @@ def process_order_payment(order):
             date=timezone.now(),
         )
 
-        # Increment balance (don't reset - preserves purchases and manual adjustments!)
+        # Increment BakeryBalance (preserves manual adjustments and purchases!)
         balance = BakeryBalance.get_instance()
         balance.amount += received
         balance.save(update_fields=["amount"])
 
+        # Update shop loan incrementally: add delivered value, subtract payment
+        # This preserves any manual adjustments the user made!
+        loan_change = delivered_total - received
+        shop.loan_balance += loan_change
+        shop.loan_balance = max(Decimal("0.00"), shop.loan_balance)
+        shop.save(update_fields=["loan_balance"])
+
         logger.info(
             f"[PROCESS] Payment created: #{payment.id}, amount={received}, "
-            f"balance={balance.amount}"
+            f"delivered={delivered_total}, loan_change={loan_change}, "
+            f"bakery_balance={balance.amount}, shop_loan={shop.loan_balance}"
         )
-
-    # Recalculate shop loan balance using centralized function
-    recalculate_shop_loan_balance(shop)

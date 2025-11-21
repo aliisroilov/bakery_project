@@ -172,7 +172,6 @@ def loan_repayment_view(request):
 
             # Use atomic transaction to prevent race conditions
             from django.db import transaction
-            from orders.utils import recalculate_shop_loan_balance
 
             with transaction.atomic():
                 # Lock shop row for update
@@ -189,8 +188,10 @@ def loan_repayment_view(request):
                     date=timezone.now()
                 )
 
-                # Recalculate shop loan balance correctly from ALL orders and payments
-                recalculate_shop_loan_balance(shop)
+                # Decrease shop loan balance incrementally (preserves manual adjustments!)
+                shop.loan_balance -= amount
+                shop.loan_balance = max(Decimal("0.00"), shop.loan_balance)
+                shop.save(update_fields=["loan_balance"])
 
             messages.success(request, f"{shop.name} uchun {amount} so'm qarz to'landi.")
             return redirect("dashboard:loan_repayment")
