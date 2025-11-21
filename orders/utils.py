@@ -90,7 +90,10 @@ def process_order_payment(order):
         if old_amount != received:
             amount_difference = received - old_amount
             existing_payment.amount = received
-            existing_payment.date = timezone.now()
+            # Update date to match order date (not today!)
+            from datetime import datetime, time
+            order_datetime = timezone.make_aware(datetime.combine(order.order_date, time.min))
+            existing_payment.date = order_datetime
             existing_payment.save(update_fields=["amount", "date"])
 
             # Adjust BakeryBalance by the difference only
@@ -113,12 +116,17 @@ def process_order_payment(order):
 
     except Payment.DoesNotExist:
         # Create new payment and update balances incrementally
+        # IMPORTANT: Use order's date, not today's date!
+        # Convert order_date (date) to datetime for Payment.date field
+        from datetime import datetime, time
+        order_datetime = timezone.make_aware(datetime.combine(order.order_date, time.min))
+
         payment = Payment.objects.create(
             order=order,
             shop=shop,
             amount=received,
             payment_type="collection",
-            date=timezone.now(),
+            date=order_datetime,
         )
 
         # Increment BakeryBalance (preserves manual adjustments and purchases!)
