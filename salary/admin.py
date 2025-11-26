@@ -9,7 +9,7 @@ class SalaryRateAdmin(admin.ModelAdmin):
     list_display = ("user", "role", "rate", "rate_type", "initial_balance_formatted", "current_balance")
     list_filter = ("rate_type", "user__role")
     search_fields = ("user__username",)
-    fields = ("user", "rate", "rate_type", "initial_balance", "notes", "get_balance_info")
+    fields = ("user", "rate", "rate_type", "initial_balance", "production_start_date", "notes", "get_balance_info")
     readonly_fields = ("get_balance_info",)
 
     def role(self, obj):

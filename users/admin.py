@@ -10,7 +10,7 @@ class SalaryRateInline(admin.StackedInline):
     can_delete = False
     verbose_name = 'Salary Configuration'
     verbose_name_plural = 'Salary Configuration'
-    fields = ('rate', 'rate_type', 'initial_balance', 'notes')
+    fields = ('rate', 'rate_type', 'initial_balance', 'production_start_date', 'notes')
     extra = 0
 
     def get_formset(self, request, obj=None, **kwargs):

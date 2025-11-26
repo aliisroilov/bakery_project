@@ -23,6 +23,13 @@ class SalaryRate(models.Model):
         help_text="Oldindan hisoblangan maosh (sistemadan oldingi qarzdorlik)"
     )
 
+    # 🆕 Add cutoff date for production counting
+    production_start_date = models.DateField(
+        blank=True,
+        null=True,
+        help_text="Only count production from this date forward. Leave blank to count all production."
+    )
+
     def __str__(self):
         return f"{self.user.username} — {self.rate} ({self.rate_type})"
 
