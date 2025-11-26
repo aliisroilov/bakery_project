@@ -6,30 +6,38 @@ from salary.models import SalaryRate
 
 
 class Command(BaseCommand):
-    help = 'Set initial salary balance for employees (pre-system debt)'
+    help = '''Set initial salary balance for employees (pre-system debt)
+
+    Examples:
+        python manage.py set_initial_balance Umarxon 3210000
+        python manage.py set_initial_balance Ali 500000 --rate 150000 --rate-type per_week
+        python manage.py set_initial_balance --list
+    '''
 
     def add_arguments(self, parser):
         parser.add_argument(
             'username',
+            nargs='?',  # Make optional when using --list
             type=str,
             help='Username of the employee'
         )
         parser.add_argument(
             'amount',
+            nargs='?',  # Make optional when using --list
             type=str,
-            help='Initial balance amount (can be negative for debt)'
+            help='INITIAL BALANCE amount (pre-system debt, can be negative)'
         )
         parser.add_argument(
             '--rate',
             type=str,
-            help='Salary rate (optional, if SalaryRate does not exist)',
+            help='SALARY RATE (not initial balance!) - only used when creating new SalaryRate',
             default='0'
         )
         parser.add_argument(
             '--rate-type',
             type=str,
             choices=['per_qop', 'per_week', 'fixed'],
-            help='Rate type (optional, if SalaryRate does not exist)',
+            help='Rate type - only used when creating new SalaryRate (default: fixed)',
             default='fixed'
         )
         parser.add_argument(
@@ -43,10 +51,18 @@ class Command(BaseCommand):
             self.list_employees()
             return
 
-        username = options['username']
-        amount = options['amount']
+        username = options.get('username')
+        amount = options.get('amount')
         rate = options['rate']
         rate_type = options['rate_type']
+
+        # Validate required arguments
+        if not username or not amount:
+            raise CommandError(
+                'Both username and amount are required.\n'
+                'Usage: python manage.py set_initial_balance <username> <amount>\n'
+                'Example: python manage.py set_initial_balance Umarxon 3210000'
+            )
 
         try:
             amount_decimal = Decimal(amount)
@@ -64,6 +80,15 @@ class Command(BaseCommand):
         except User.DoesNotExist:
             raise CommandError(f'User "{username}" does not exist')
 
+        # Show what will be done
+        self.stdout.write(
+            self.style.WARNING(
+                f'\n📝 Setting initial balance for {username}:\n'
+                f'   Initial Balance: {amount_decimal:,}\n'
+                f'   Rate: {rate_decimal} ({rate_type})\n'
+            )
+        )
+
         # Get or create SalaryRate
         with transaction.atomic():
             salary_rate, created = SalaryRate.objects.get_or_create(
@@ -78,24 +103,26 @@ class Command(BaseCommand):
             if not created:
                 # Update existing record
                 old_balance = salary_rate.initial_balance
+                old_rate = salary_rate.rate
+                old_rate_type = salary_rate.rate_type
+
                 salary_rate.initial_balance = amount_decimal
                 salary_rate.save(update_fields=['initial_balance'])
 
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f'✓ Updated initial balance for {username}:\n'
-                        f'  Old: {old_balance:,}\n'
-                        f'  New: {amount_decimal:,}\n'
-                        f'  Rate: {salary_rate.rate} ({salary_rate.rate_type})'
+                        f'\n✓ Updated initial balance for {username}:\n'
+                        f'  Initial Balance: {old_balance:,} → {amount_decimal:,}\n'
+                        f'  Rate: {old_rate:,} ({old_rate_type}) [unchanged]\n'
                     )
                 )
             else:
                 # Created new record
                 self.stdout.write(
                     self.style.SUCCESS(
-                        f'✓ Created SalaryRate for {username}:\n'
+                        f'\n✓ Created NEW SalaryRate for {username}:\n'
                         f'  Initial balance: {amount_decimal:,}\n'
-                        f'  Rate: {rate_decimal} ({rate_type})'
+                        f'  Rate: {rate_decimal} ({rate_type})\n'
                     )
                 )
 
