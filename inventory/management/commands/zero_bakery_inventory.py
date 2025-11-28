@@ -26,6 +26,11 @@ class Command(BaseCommand):
             help='Zero out all bakery products',
         )
         parser.add_argument(
+            '--list',
+            action='store_true',
+            help='List all bakery products and their quantities',
+        )
+        parser.add_argument(
             '--note',
             type=str,
             default='Inventarizatsiya: balansni nolga tushirish',
@@ -35,12 +40,23 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         products = options.get('products')
         zero_all = options.get('all')
+        list_products = options.get('list')
         note = options.get('note')
+
+        # Handle --list option
+        if list_products:
+            stocks = BakeryProductStock.objects.select_related('product').all().order_by('product__name')
+            self.stdout.write(self.style.SUCCESS('\nBakery Product Inventory:'))
+            self.stdout.write('=' * 60)
+            for stock in stocks:
+                self.stdout.write(f'{stock.product.name:30s} {stock.quantity:>15}')
+            self.stdout.write('=' * 60)
+            return
 
         if not products and not zero_all:
             self.stdout.write(
                 self.style.ERROR(
-                    'Please specify --products or --all flag'
+                    'Please specify --products, --all, or --list flag'
                 )
             )
             return
@@ -58,8 +74,14 @@ class Command(BaseCommand):
             if zero_all:
                 stocks = BakeryProductStock.objects.select_related('product').select_for_update()
             else:
+                # Build a case-insensitive query for each product
+                from django.db.models import Q
+                query = Q()
+                for product_name in products:
+                    query |= Q(product__name__iexact=product_name)
+
                 stocks = BakeryProductStock.objects.select_related('product').filter(
-                    product__name__in=products
+                    query
                 ).select_for_update()
 
             if not stocks.exists():
@@ -68,10 +90,19 @@ class Command(BaseCommand):
                         f'No matching products found for: {products}'
                     )
                 )
+                self.stdout.write(
+                    self.style.NOTICE(
+                        '\nTip: Use --list to see all available products'
+                    )
+                )
                 return
 
+            # Track which products were found
+            found_products = set()
             zeroed_count = 0
+
             for stock in stocks:
+                found_products.add(stock.product.name.lower())
                 old_qty = stock.quantity
 
                 if old_qty == Decimal('0.000'):
@@ -100,6 +131,21 @@ class Command(BaseCommand):
                     )
                 )
                 zeroed_count += 1
+
+            # Show which products were not found
+            if products:
+                not_found = [p for p in products if p.lower() not in found_products]
+                if not_found:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f'\n⚠ Not found: {", ".join(not_found)}'
+                        )
+                    )
+                    self.stdout.write(
+                        self.style.NOTICE(
+                            'Tip: Use --list to see all available products'
+                        )
+                    )
 
             self.stdout.write(
                 self.style.SUCCESS(
