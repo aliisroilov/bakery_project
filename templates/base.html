@@ -22,21 +22,26 @@
       max-width: 100%;
       overflow-x: auto; /* allow horizontal scroll when needed */
     }
-    body { padding-top: 64px; }
+    body { padding-top: 104px; }
+    body.v2-banner-hidden { padding-top: 64px; }
+
+    /* ---------- V2 Beta banner ---------- */
+    .v2-banner-hidden #v2-beta-banner { display: none; }
 
     /* ---------- Navbar ---------- */
     nav {
       position: fixed;
-      top: 0;
+      top: 40px; /* below banner */
       left: 0;
       width: 100%;
       background: rgba(255,255,255,0.95);
       backdrop-filter: blur(6px);
-      transition: transform 0.28s cubic-bezier(.2,.9,.2,1), box-shadow 0.2s;
+      transition: transform 0.28s cubic-bezier(.2,.9,.2,1), box-shadow 0.2s, top 0.2s;
       z-index: 1100;
       will-change: transform;
     }
-    nav.hide { transform: translateY(-110%); }
+    body.v2-banner-hidden nav { top: 0; }
+    nav.hide { transform: translateY(-150%); }
 
     /* ---------- Mobile menu (slides from top) ---------- */
     #mobile-menu {
@@ -53,10 +58,11 @@
       transition: top 0.3s ease, opacity 0.25s ease, transform 0.25s ease;
     }
     #mobile-menu.show {
-      top: 64px; /* below navbar */
+      top: 104px; /* below banner + navbar */
       opacity: 1;
       transform: translateY(0);
     }
+    body.v2-banner-hidden #mobile-menu.show { top: 64px; }
     #mobile-menu a { display:block; padding:8px 12px; border-radius:6px; color:#333; text-decoration:none; }
     #mobile-menu a:hover { background:#f3f4f6; color:#111; }
 
@@ -72,6 +78,35 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body class="bg-gray-100 font-sans text-gray-800">
+
+  <!-- V2 Beta banner -->
+  {% if request.user.is_authenticated %}
+  <div id="v2-beta-banner"
+       class="fixed top-0 left-0 right-0 z-[1200] bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm shadow-md">
+    <div class="max-w-7xl mx-auto px-4 py-2 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-white/20 text-xs font-semibold tracking-wide shrink-0">
+          BETA
+        </span>
+        <span class="truncate">
+          Yangi versiya tayyor — <strong>v2.sutli-non.uz</strong>
+        </span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <a href="https://v2.sutli-non.uz"
+           target="_blank" rel="noopener"
+           class="bg-white text-orange-600 font-semibold px-3 py-1.5 rounded-lg hover:bg-amber-50 transition whitespace-nowrap text-xs sm:text-sm">
+          Sinab ko'rish →
+        </a>
+        <button id="v2-beta-close"
+                aria-label="Yopish"
+                class="text-white/80 hover:text-white text-lg leading-none px-1">
+          ×
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- Navbar -->
   <nav id="navbar" class="bg-white shadow-md">
@@ -182,6 +217,18 @@
 
   <!-- JS -->
   <script>
+    // V2 Beta banner dismiss (remembered in localStorage)
+    (function initV2Banner() {
+      if (localStorage.getItem("v2BetaBannerDismissed") === "1") {
+        document.body.classList.add("v2-banner-hidden");
+      }
+      const closeBtn = document.getElementById("v2-beta-close");
+      closeBtn?.addEventListener("click", () => {
+        document.body.classList.add("v2-banner-hidden");
+        localStorage.setItem("v2BetaBannerDismissed", "1");
+      });
+    })();
+
     const toggleBtn = document.getElementById("menu-toggle");
     const mobileMenu = document.getElementById("mobile-menu");
     const sidebar = document.getElementById("sidebar");

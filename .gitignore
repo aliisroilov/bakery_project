@@ -1,13 +1,53 @@
-# Python cache files
+# ─── Python ───
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
 
-# Local database
-db.sqlite3
-
-# Coverage files
-.coverage
-
-# Virtual environment folders
+# ─── Virtualenvs ───
 venv/
+env/
+.venv/
 bakery_env/
+
+# ─── Django ───
+*.log
+db.sqlite3
+db.sqlite3-journal
+staticfiles/
+media/
+# V2 migration artefact
+v1_snapshot.json
+
+# ─── Env files ───
+.env
+.env.local
+.env.*.local
+.env.production
+
+# ─── Frontend (V2) ───
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# ─── Testing / coverage ───
+.coverage
+htmlcov/
+coverage/
+.pytest_cache/
+
+# ─── IDE / editor ───
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── OS cruft ───
+.DS_Store
+Thumbs.db
+
+# ─── Claude / AI tooling ───
+.claude/

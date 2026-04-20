@@ -1,0 +1,15 @@
+from django.urls import path
+
+from . import views
+
+app_name = "reports"
+
+urlpatterns = [
+    path("data/", views.ReportsDataView.as_view(), name="data"),
+    path("payments.xlsx", views.PaymentsExportView.as_view(), name="payments-export"),
+    path("orders.xlsx", views.OrdersExportView.as_view(), name="orders-export"),
+    path("production.xlsx", views.ProductionExportView.as_view(), name="production-export"),
+    path("expenses.xlsx", views.ExpensesExportView.as_view(), name="expenses-export"),
+    path("salary.xlsx", views.SalaryExportView.as_view(), name="salary-export"),
+    path("shop-debts.xlsx", views.ShopDebtsExportView.as_view(), name="shop-debts-export"),
+]
