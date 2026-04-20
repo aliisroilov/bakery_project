@@ -6,6 +6,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ShopsPage } from "./pages/ShopsPage";
 import { ShopDetailPage } from "./pages/ShopDetailPage";
+import { RegionsPage } from "./pages/RegionsPage";
+import { RegionDetailPage } from "./pages/RegionDetailPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { OrderDetailPage } from "./pages/OrderDetailPage";
@@ -47,6 +49,8 @@ export default function App() {
       <Route path="/orders/:id" element={<Protected><OrderDetailPage /></Protected>} />
       <Route path="/shops" element={<Protected><ShopsPage /></Protected>} />
       <Route path="/shops/:id" element={<Protected><ShopDetailPage /></Protected>} />
+      <Route path="/regions" element={<Protected><RegionsPage /></Protected>} />
+      <Route path="/regions/:id" element={<Protected><RegionDetailPage /></Protected>} />
       <Route path="/products" element={<Protected><ProductsPage /></Protected>} />
       <Route path="/finance" element={<Protected><KassaPage /></Protected>} />
       <Route path="/inventory" element={<Protected><InventoryPage /></Protected>} />

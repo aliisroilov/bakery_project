@@ -14,6 +14,8 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView,
 )
 
+from apps.shops.urls import regions_urlpatterns
+
 api_v1 = [
     # Auth
     path("auth/login/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
@@ -23,6 +25,8 @@ api_v1 = [
     path("", include("apps.core.urls")),
     path("users/", include("apps.users.urls")),
     path("shops/", include("apps.shops.urls")),
+    # Regions live in the shops app but are exposed at the root level.
+    path("regions/", include(regions_urlpatterns)),
     path("products/", include("apps.products.urls")),
     path("orders/", include("apps.orders.urls")),
     path("inventory/", include("apps.inventory.urls")),

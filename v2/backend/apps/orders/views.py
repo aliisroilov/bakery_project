@@ -33,6 +33,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         params = self.request.query_params
         if shop := params.get("shop"):
             qs = qs.filter(shop_id=shop)
+        if region := params.get("region"):
+            qs = qs.filter(shop__region_id=region)
         if st := params.get("status"):
             qs = qs.filter(status=st)
         if pr := params.get("priority"):

@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ShoppingCart,
   Store,
+  MapPin,
   Wheat,
   Factory,
   Wallet,
@@ -27,6 +28,7 @@ import { cn, formatMoney } from "../lib/utils";
 const NAV = [
   { to: "/", label: "Bosh sahifa", icon: LayoutDashboard },
   { to: "/orders", label: "Buyurtmalar", icon: ShoppingCart },
+  { to: "/regions", label: "Hududlar", icon: MapPin },
   { to: "/shops", label: "Do'konlar", icon: Store },
   { to: "/products", label: "Mahsulotlar", icon: Package },
   { to: "/inventory", label: "Xomashyo", icon: Wheat },

@@ -1,8 +1,11 @@
 from django.db.models import Count, F, Q
+from django.utils import timezone
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from apps.orders.models import Order, OrderStatus
 
 from .models import Region, Shop, ShopProductPrice
 from .serializers import (
@@ -18,7 +21,60 @@ class RegionViewSet(viewsets.ModelViewSet):
     serializer_class = RegionSerializer
 
     def get_queryset(self):
-        return Region.objects.annotate(shop_count=Count("shops")).order_by("name")
+        qs = Region.objects.annotate(shop_count=Count("shops")).order_by("name")
+        archived = self.request.query_params.get("archived")
+        if archived in ("1", "true"):
+            qs = qs.filter(is_archived=True)
+        elif archived in ("0", "false"):
+            qs = qs.filter(is_archived=False)
+        return qs
+
+    @action(detail=False, methods=["get"], url_path="today_stats")
+    def today_stats(self, request):
+        """Per-region order counts for a given date (default = today).
+
+        Returns: [{id, name, shop_count, total, pending, partial, delivered, cancelled}, ...]
+        Used by the Hududlar overview card grid.
+        """
+        date = request.query_params.get("date") or timezone.localdate().isoformat()
+        regions = (
+            Region.objects.filter(is_archived=False)
+            .annotate(shop_count=Count("shops", distinct=True))
+            .order_by("name")
+        )
+        # One aggregated query: count orders on the date, grouped by region + status.
+        by_region = (
+            Order.objects.filter(order_date=date)
+            .values("shop__region_id", "status")
+            .annotate(n=Count("id"))
+        )
+        totals: dict[int, dict[str, int]] = {}
+        for row in by_region:
+            rid = row["shop__region_id"]
+            if rid is None:
+                continue
+            bucket = totals.setdefault(
+                rid,
+                {"total": 0, "pending": 0, "partial": 0, "delivered": 0, "cancelled": 0},
+            )
+            bucket["total"] += row["n"]
+            bucket[row["status"]] = bucket.get(row["status"], 0) + row["n"]
+
+        result = []
+        for r in regions:
+            stats = totals.get(r.id, {
+                "total": 0, "pending": 0, "partial": 0,
+                "delivered": 0, "cancelled": 0,
+            })
+            result.append({
+                "id": r.id,
+                "name": r.name,
+                "note": r.note,
+                "shop_count": r.shop_count,
+                "date": date,
+                **stats,
+            })
+        return Response(result)
 
 
 class ShopViewSet(viewsets.ModelViewSet):

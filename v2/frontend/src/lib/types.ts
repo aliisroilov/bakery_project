@@ -94,6 +94,19 @@ export interface Region {
   created_at: string;
 }
 
+export interface RegionTodayStats {
+  id: number;
+  name: string;
+  note: string;
+  shop_count: number;
+  date: string;
+  total: number;
+  pending: number;
+  partial: number;
+  delivered: number;
+  cancelled: number;
+}
+
 export interface Shop {
   id: number;
   name: string;
