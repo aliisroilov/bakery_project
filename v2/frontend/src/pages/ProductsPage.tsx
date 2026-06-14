@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Wheat, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Wheat, Plus, RefreshCw, Trash2, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { api } from "../lib/api";
 import type { Paginated, Product } from "../lib/types";
 import { formatMoney } from "../lib/utils";
@@ -19,14 +19,28 @@ interface RecipeLine {
 
 export function ProductsPage() {
   const [open, setOpen] = useState(false);
+  const [editProduct, setEditProduct] = useState<Product | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const qc = useQueryClient();
+
   const { data, isLoading } = useQuery<Paginated<Product>>({
-    queryKey: ["products"],
-    queryFn: async () => (await api.get<Paginated<Product>>("/products/")).data,
+    queryKey: ["products", { archived: showArchived }],
+    queryFn: async () =>
+      (await api.get<Paginated<Product>>(`/products/?archived=${showArchived ? "true" : "false"}`)).data,
   });
 
   const recalc = useMutation({
     mutationFn: () => api.post("/products/recalc-costs/"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+  });
+
+  const archive = useMutation({
+    mutationFn: (id: number) => api.delete(`/products/${id}/`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
+  });
+
+  const unarchive = useMutation({
+    mutationFn: (id: number) => api.patch(`/products/${id}/`, { is_archived: false }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
   });
 
@@ -39,7 +53,14 @@ export function ProductsPage() {
             {data?.count ?? 0} ta mahsulot · tan narx retsept × xomashyo narxidan hisoblanadi
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setShowArchived((v) => !v)}
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border text-sm hover:bg-muted"
+          >
+            {showArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+            <span className="hidden sm:inline">{showArchived ? "Aktiv" : "Arxiv"}</span>
+          </button>
           <button
             onClick={() => recalc.mutate()}
             disabled={recalc.isPending}
@@ -67,11 +88,11 @@ export function ProductsPage() {
             <tr>
               <th className="text-left px-4 py-3 font-medium">Nomi</th>
               <th className="text-right px-4 py-3 font-medium">Narx (UZS)</th>
-              <th className="text-right px-4 py-3 font-medium">Narx (USD)</th>
               <th className="text-right px-4 py-3 font-medium">Tan narx</th>
               <th className="text-right px-4 py-3 font-medium">Meshok</th>
-              <th className="text-right px-4 py-3 font-medium">Ishlab chiqarish oyligi</th>
+              <th className="text-right px-4 py-3 font-medium">Nonvoyga 1 dona</th>
               <th className="text-right px-4 py-3 font-medium">Zaxira</th>
+              <th className="text-right px-4 py-3 font-medium w-24"></th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -83,18 +104,19 @@ export function ProductsPage() {
               </tr>
             )}
             {data?.results.map((p) => (
-              <tr key={p.id} className="hover:bg-muted/30">
-                <td className="px-4 py-3 font-medium flex items-center gap-2">
-                  <Wheat className="size-4 text-bakery-500" /> {p.name}
+              <tr key={p.id} className={`hover:bg-muted/30 ${p.is_archived ? "opacity-60" : ""}`}>
+                <td className="px-4 py-3 font-medium">
+                  <div className="flex items-center gap-2">
+                    <Wheat className="size-4 text-bakery-500 shrink-0" />
+                    <span>{p.name}</span>
+                    {p.is_archived && (
+                      <span className="text-xs bg-muted rounded px-1.5 py-0.5">arxiv</span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">
                   {parseFloat(p.default_price_uzs) > 0
                     ? formatMoney(p.default_price_uzs, "UZS")
-                    : "—"}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {parseFloat(p.default_price_usd) > 0
-                    ? formatMoney(p.default_price_usd, "USD")
                     : "—"}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
@@ -113,6 +135,34 @@ export function ProductsPage() {
                 <td className="px-4 py-3 text-right tabular-nums">
                   {parseFloat(p.stock_quantity).toFixed(0)}
                 </td>
+                <td className="px-4 py-3 text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => setEditProduct(p)}
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Tahrirlash"
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                    {p.is_archived ? (
+                      <button
+                        onClick={() => unarchive.mutate(p.id)}
+                        className="text-muted-foreground hover:text-emerald-600"
+                        title="Arxivdan chiqarish"
+                      >
+                        <ArchiveRestore className="size-3.5" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => archive.mutate(p.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                        title="Arxivlash"
+                      >
+                        <Archive className="size-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -127,10 +177,38 @@ export function ProductsPage() {
           </div>
         )}
         {data?.results.map((p) => (
-          <div key={p.id} className="rounded-xl border bg-card p-3 space-y-2">
-            <div className="flex items-center gap-2 font-medium">
-              <Wheat className="size-4 text-bakery-500 shrink-0" />
-              <span className="truncate">{p.name}</span>
+          <div key={p.id} className={`rounded-xl border bg-card p-3 space-y-2 ${p.is_archived ? "opacity-60" : ""}`}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-medium min-w-0">
+                <Wheat className="size-4 text-bakery-500 shrink-0" />
+                <span className="truncate">{p.name}</span>
+                {p.is_archived && (
+                  <span className="text-xs bg-muted rounded px-1 py-0.5 shrink-0">arxiv</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => setEditProduct(p)}
+                  className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+                {p.is_archived ? (
+                  <button
+                    onClick={() => unarchive.mutate(p.id)}
+                    className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-emerald-600"
+                  >
+                    <ArchiveRestore className="size-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => archive.mutate(p.id)}
+                    className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-destructive"
+                  >
+                    <Archive className="size-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-1.5 text-xs">
               <div className="flex justify-between gap-2">
@@ -163,20 +241,36 @@ export function ProductsPage() {
           </div>
         ))}
       </div>
-      {open && <NewProductModal onClose={() => setOpen(false)} />}
+
+      {open && <ProductModal onClose={() => setOpen(false)} />}
+      {editProduct && <ProductModal product={editProduct} onClose={() => setEditProduct(null)} />}
     </div>
   );
 }
 
-function NewProductModal({ onClose }: { onClose: () => void }) {
+interface ExistingRecipeLine extends RecipeLine {
+  id?: number; // set for existing DB rows
+  deleted?: boolean;
+}
+
+function ProductModal({
+  product,
+  onClose,
+}: {
+  product?: Product;
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
-  const [name, setName] = useState("");
-  const [defaultUzs, setDefaultUzs] = useState("0");
-  const [meshokSize, setMeshokSize] = useState("160");
-  const [salary, setSalary] = useState("0");
-  const [lines, setLines] = useState<RecipeLine[]>([
+  const isEdit = !!product;
+
+  const [name, setName] = useState(product?.name ?? "");
+  const [defaultUzs, setDefaultUzs] = useState(product?.default_price_uzs ?? "0");
+  const [meshokSize, setMeshokSize] = useState(product?.meshok_size ?? "160");
+  const [salary, setSalary] = useState(product?.production_salary_per_unit_uzs ?? "0");
+  const [lines, setLines] = useState<ExistingRecipeLine[]>([
     { key: crypto.randomUUID(), ingredient: "", amount_per_meshok: "" },
   ]);
+  const [recipesLoaded, setRecipesLoaded] = useState(!isEdit);
 
   const { data: ingredients } = useQuery<Paginated<Ingredient>>({
     queryKey: ["inventory", "ingredients", "for-recipe"],
@@ -185,12 +279,61 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
         .data,
   });
 
-  const validLines = lines.filter(
+  // Fetch existing recipe lines when editing.
+  useQuery({
+    queryKey: ["inventory", "recipes", product?.id],
+    queryFn: async () => {
+      const res = await api.get<{ results: Array<{ id: number; ingredient: number; amount_per_meshok: string }> }>(
+        `/inventory/recipes/?product=${product!.id}&page_size=100`
+      );
+      const rows = res.data.results ?? res.data;
+      const loaded: ExistingRecipeLine[] = (Array.isArray(rows) ? rows : []).map((r) => ({
+        key: crypto.randomUUID(),
+        id: r.id,
+        ingredient: r.ingredient,
+        amount_per_meshok: r.amount_per_meshok,
+      }));
+      setLines(loaded.length > 0 ? loaded : [{ key: crypto.randomUUID(), ingredient: "", amount_per_meshok: "" }]);
+      setRecipesLoaded(true);
+      return rows;
+    },
+    enabled: isEdit && !!product?.id,
+  });
+
+  const visibleLines = lines.filter((l) => !l.deleted);
+  const validLines = visibleLines.filter(
     (l) => l.ingredient && parseFloat(l.amount_per_meshok) > 0,
   );
 
-  const create = useMutation({
+  const save = useMutation({
     mutationFn: async () => {
+      if (isEdit) {
+        await api.patch<Product>(`/products/${product!.id}/`, {
+          name,
+          default_price_uzs: defaultUzs,
+          meshok_size: meshokSize,
+          production_salary_per_unit_uzs: salary,
+        });
+        // Sync recipe: delete removed lines, update/create others.
+        const deletions = lines.filter((l) => l.deleted && l.id);
+        await Promise.all(deletions.map((l) => api.delete(`/inventory/recipes/${l.id}/`)));
+        const upserts = validLines;
+        await Promise.all(
+          upserts.map((l) => {
+            if (l.id) {
+              return api.patch(`/inventory/recipes/${l.id}/`, {
+                amount_per_meshok: l.amount_per_meshok,
+              });
+            }
+            return api.post("/inventory/recipes/", {
+              product: product!.id,
+              ingredient: l.ingredient,
+              amount_per_meshok: l.amount_per_meshok,
+            });
+          }),
+        );
+        return;
+      }
       const res = await api.post<Product>("/products/", {
         name,
         default_price_uzs: defaultUzs,
@@ -207,10 +350,10 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
           }),
         ),
       );
-      return res.data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory", "recipes"] });
       onClose();
     },
   });
@@ -222,12 +365,16 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
     ]);
 
   const removeLine = (key: string) =>
-    setLines((ls) => (ls.length === 1 ? ls : ls.filter((l) => l.key !== key)));
+    setLines((ls) =>
+      ls.map((l) =>
+        l.key === key ? (l.id ? { ...l, deleted: true } : null) : l
+      ).filter(Boolean) as ExistingRecipeLine[]
+    );
 
-  const updateLine = (key: string, patch: Partial<RecipeLine>) =>
+  const updateLine = (key: string, patch: Partial<ExistingRecipeLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  const canSave = name.trim().length > 0;
+  const canSave = name.trim().length > 0 && recipesLoaded;
 
   return (
     <div
@@ -238,7 +385,9 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-2xl bg-card rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
       >
-        <h2 className="font-semibold text-lg mb-4">Yangi mahsulot</h2>
+        <h2 className="font-semibold text-lg mb-4">
+          {isEdit ? `Tahrirlash: ${product!.name}` : "Yangi mahsulot"}
+        </h2>
         <div className="space-y-3">
           <Field label="Nomi">
             <input
@@ -278,7 +427,7 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
           <div className="rounded-xl border bg-muted/30 p-3 sm:p-4">
             <div className="flex items-start justify-between gap-2 mb-3">
               <div>
-                <h3 className="font-semibold text-sm">Retsept (xomashyo)</h3>
+                <h3 className="font-semibold text-sm">Retsept / Tarkib (sostav)</h3>
                 <p className="text-xs text-muted-foreground">
                   1 qop (meshok) uchun kerakli xomashyo — tan narx shu asosda hisoblanadi
                 </p>
@@ -291,8 +440,13 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
                 <Plus className="size-3.5" /> Qo'shish
               </button>
             </div>
+            {isEdit && !recipesLoaded && (
+              <div className="text-xs text-muted-foreground text-center py-4">
+                Yuklanmoqda…
+              </div>
+            )}
             <div className="space-y-2">
-              {lines.map((l) => {
+              {visibleLines.map((l) => {
                 const ing = ingredients?.results.find((i) => i.id === l.ingredient);
                 return (
                   <div key={l.key} className="flex gap-2 items-center">
@@ -329,7 +483,7 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
                     <button
                       type="button"
                       onClick={() => removeLine(l.key)}
-                      disabled={lines.length === 1}
+                      disabled={visibleLines.length === 1 && !l.id}
                       className="shrink-0 size-10 rounded-lg border grid place-items-center text-muted-foreground hover:text-destructive disabled:opacity-30"
                     >
                       <Trash2 className="size-4" />
@@ -338,14 +492,9 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
                 );
               })}
             </div>
-            {validLines.length === 0 && (
-              <p className="text-xs text-muted-foreground mt-3">
-                Retsept bo'sh — mahsulot yaratilgandan keyin qo'shishingiz mumkin.
-              </p>
-            )}
           </div>
         </div>
-        {create.isError && (
+        {save.isError && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
             Saqlashda xatolik.
           </div>
@@ -358,11 +507,11 @@ function NewProductModal({ onClose }: { onClose: () => void }) {
             Bekor qilish
           </button>
           <button
-            disabled={!canSave || create.isPending}
-            onClick={() => create.mutate()}
+            disabled={!canSave || save.isPending}
+            onClick={() => save.mutate()}
             className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
           >
-            {create.isPending ? "Saqlanmoqda…" : "Saqlash"}
+            {save.isPending ? "Saqlanmoqda…" : "Saqlash"}
           </button>
         </div>
       </div>

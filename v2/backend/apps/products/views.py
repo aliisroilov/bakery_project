@@ -24,6 +24,16 @@ class ProductViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_archived=False)
         return qs
 
+    def perform_destroy(self, instance):
+        instance.archive()
+
+    @action(detail=True, methods=["post"])
+    def unarchive(self, request, pk=None):
+        """Restore an archived product."""
+        product = self.get_object()
+        product.unarchive()
+        return Response(ProductSerializer(product).data)
+
     @action(detail=True, methods=["post"], url_path="recalc-cost")
     def recalc_cost(self, request, pk=None):
         """Feature #24 — recompute cost_price_uzs from the current recipe."""

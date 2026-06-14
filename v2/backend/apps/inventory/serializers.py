@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from .models import Ingredient, ProductRecipe, Purchase, Unit
+from apps.production.models import InventoryRevisionReport
 
 
 class UnitSerializer(serializers.ModelSerializer):
@@ -55,3 +56,22 @@ class ProductRecipeSerializer(serializers.ModelSerializer):
             "amount_per_meshok", "created_at",
         ]
         read_only_fields = ["created_at"]
+
+
+class InventoryRevisionSerializer(serializers.ModelSerializer):
+    ingredient_name = serializers.CharField(source="ingredient.name", read_only=True, default="")
+    ingredient_unit = serializers.CharField(source="ingredient.unit.short", read_only=True, default="")
+    user_name = serializers.CharField(source="user.display_name", read_only=True, default="")
+    diff = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InventoryRevisionReport
+        fields = [
+            "id", "item_type", "ingredient", "ingredient_name", "ingredient_unit",
+            "old_quantity", "new_quantity", "diff",
+            "note", "batch_id", "user", "user_name", "created_at",
+        ]
+        read_only_fields = ["created_at"]
+
+    def get_diff(self, obj):
+        return str(obj.new_quantity - obj.old_quantity)

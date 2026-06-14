@@ -29,6 +29,9 @@ class User(AbstractUser, ArchivableModel):
         related_name="producers",
         help_text="For nonvoy staff: which product this baker produces.",
     )
+    # Snapshot of the user's positions (group memberships, assigned shops) taken
+    # at archive time so "qaytarish" (restore) can put them back. Empty when active.
+    archived_state = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["-date_joined"]
@@ -64,6 +67,25 @@ class NonvoyProfile(TimestampedModel):
 
     def __str__(self) -> str:
         return f"Nonvoy: {self.user.display_name}"
+
+
+class EmployeeGroup(TimestampedModel):
+    """A named group of nonvoy (baker) employees — for group-based production attribution."""
+
+    name = models.CharField(max_length=100, unique=True)
+    members = models.ManyToManyField(
+        User,
+        blank=True,
+        related_name="employee_groups",
+        limit_choices_to={"role": Role.NONVOY},
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class UserActivityLog(models.Model):

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Factory,
@@ -12,8 +13,16 @@ import {
   PackageOpen,
   Banknote,
   ArrowRight,
+  HandCoins,
+  Truck,
+  X,
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
+  CartesianGrid, ReferenceLine,
+} from "recharts";
 import { useAuth } from "../lib/auth";
+import { C, TICK, mkTooltip } from "../lib/chart";
 import { api } from "../lib/api";
 import type { DashboardSummary } from "../lib/types";
 import { formatMoney } from "../lib/utils";
@@ -28,6 +37,10 @@ function formatDeliveryTime(iso: string | null): string {
 
 export function DashboardPage() {
   const user = useAuth((s) => s.user);
+  const [netIncomeOpen, setNetIncomeOpen] = useState(false);
+
+  if (user?.role === "driver") return <DriverDashboard />;
+
   const { data, isLoading, error } = useQuery<DashboardSummary>({
     queryKey: ["dashboard", "summary"],
     queryFn: async () => (await api.get<DashboardSummary>("/dashboard/summary/")).data,
@@ -54,9 +67,38 @@ export function DashboardPage() {
         </div>
       )}
 
+      {/* Loan limit alerts — shown prominently at the top */}
+      {data?.over_loan_limit && data.over_loan_limit.length > 0 && (
+        <div className="rounded-xl border-2 border-destructive/50 bg-destructive/8 p-4 sm:p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="size-5 text-destructive" />
+            <h2 className="font-semibold text-destructive text-sm sm:text-base">
+              Qarz limitidan oshgan do'konlar ({data.over_loan_limit.length} ta)
+            </h2>
+          </div>
+          <ul className="space-y-2 text-sm">
+            {data.over_loan_limit.map((s) => (
+              <li key={s.id} className="flex items-center justify-between gap-2">
+                <Link
+                  to={`/shops/${s.id}`}
+                  className="font-medium hover:underline truncate text-destructive"
+                >
+                  {s.name}
+                </Link>
+                <span className="text-destructive tabular-nums shrink-0 text-xs sm:text-sm font-semibold">
+                  {formatMoney(s.loan_balance_uzs, "UZS")} /{" "}
+                  {formatMoney(s.loan_limit_uzs, "UZS")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Kassa + production + kirim */}
       <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-4">
         <StatCard
+          to="/finance"
           icon={<Wallet className="size-5" />}
           label="Seyf"
           primary={seyf ? formatMoney(seyf.balance_uzs, "UZS") : "—"}
@@ -64,6 +106,7 @@ export function DashboardPage() {
           loading={isLoading}
         />
         <StatCard
+          to="/finance"
           icon={<Wallet className="size-5" />}
           label="Rizoxon"
           primary={rizoxon ? formatMoney(rizoxon.balance_uzs, "UZS") : "—"}
@@ -71,17 +114,19 @@ export function DashboardPage() {
           loading={isLoading}
         />
         <StatCard
+          to="/production"
           icon={<Factory className="size-5" />}
           label="Bugungi ishlab chiqarish"
-          primary={data ? `${data.production.today.meshok} qop` : "—"}
+          primary={data ? `${parseFloat(data.production.today.meshok).toFixed(1)} qop` : "—"}
           secondary={
             data
-              ? `${data.production.today.units} dona · oy: ${data.production.month.meshok} qop`
+              ? `${parseFloat(data.production.today.units).toFixed(0)} dona · oy: ${parseFloat(data.production.month.meshok).toFixed(1)} qop`
               : "qop"
           }
           loading={isLoading}
         />
         <StatCard
+          to="/finance"
           icon={<ShoppingCart className="size-5" />}
           label="Bugungi kirim"
           primary={data ? formatMoney(data.kirim_today.uzs, "UZS") : "—"}
@@ -94,6 +139,7 @@ export function DashboardPage() {
       {/* Orders today */}
       <div className="grid gap-3 sm:gap-4 grid-cols-2 xl:grid-cols-4">
         <StatCard
+          to="/orders"
           icon={<ShoppingCart className="size-5" />}
           label="Bugungi buyurtmalar"
           primary={data ? String(data.orders_today.total) : "—"}
@@ -101,6 +147,7 @@ export function DashboardPage() {
           loading={isLoading}
         />
         <StatCard
+          to="/orders?status=pending"
           icon={<Clock className="size-5" />}
           label="Kutilmoqda"
           primary={data ? String(data.orders_today.pending) : "—"}
@@ -109,6 +156,7 @@ export function DashboardPage() {
           tone="warning"
         />
         <StatCard
+          to="/orders?status=partial"
           icon={<PackageOpen className="size-5" />}
           label="Qisman yetkazilgan"
           primary={data ? String(data.orders_today.partial) : "—"}
@@ -117,6 +165,7 @@ export function DashboardPage() {
           tone="warning"
         />
         <StatCard
+          to="/orders?status=delivered"
           icon={<CheckCircle2 className="size-5" />}
           label="Yetkazilgan"
           primary={data ? String(data.orders_today.delivered) : "—"}
@@ -242,10 +291,16 @@ export function DashboardPage() {
             )}
           </div>
 
-          <div className="rounded-xl border bg-card p-4 sm:p-5">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="size-4 text-bakery-500" />
-              <h2 className="font-semibold">Net daromad (bugun)</h2>
+          <div
+            className="rounded-xl border bg-card p-4 sm:p-5 cursor-pointer hover:border-bakery-300 transition-colors"
+            onClick={() => setNetIncomeOpen(true)}
+          >
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="size-4 text-bakery-500" />
+                <h2 className="font-semibold">Net daromad (bugun)</h2>
+              </div>
+              <ArrowRight className="size-4 text-muted-foreground" />
             </div>
             {data ? (
               <>
@@ -271,17 +326,43 @@ export function DashboardPage() {
                 )}
                 <div className="text-xs text-muted-foreground mt-3 space-y-1 pt-3 border-t">
                   <div className="flex justify-between">
-                    <span>Kirim:</span>
+                    <span>Kirim (to'lov):</span>
                     <span className="tabular-nums text-emerald-600">
-                      {formatMoney(data.net_income_today.revenue_uzs, "UZS")}
+                      +{formatMoney(data.net_income_today.revenue_uzs, "UZS")}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Chiqim:</span>
-                    <span className="tabular-nums text-destructive">
-                      −{formatMoney(data.net_income_today.expenses_uzs, "UZS")}
-                    </span>
-                  </div>
+                  {parseFloat(data.net_income_today.breakdown.purchases_uzs) > 0 && (
+                    <div className="flex justify-between text-muted-foreground/80">
+                      <span>· Xomashyo:</span>
+                      <span className="tabular-nums">
+                        −{formatMoney(data.net_income_today.breakdown.purchases_uzs, "UZS")}
+                      </span>
+                    </div>
+                  )}
+                  {parseFloat(data.net_income_today.breakdown.general_expenses_uzs) > 0 && (
+                    <div className="flex justify-between text-muted-foreground/80">
+                      <span>· Xarajatlar:</span>
+                      <span className="tabular-nums">
+                        −{formatMoney(data.net_income_today.breakdown.general_expenses_uzs, "UZS")}
+                      </span>
+                    </div>
+                  )}
+                  {parseFloat(data.net_income_today.breakdown.salary_uzs) > 0 && (
+                    <div className="flex justify-between text-muted-foreground/80">
+                      <span>· Oylik/avans:</span>
+                      <span className="tabular-nums">
+                        −{formatMoney(data.net_income_today.breakdown.salary_uzs, "UZS")}
+                      </span>
+                    </div>
+                  )}
+                  {parseFloat(data.net_income_today.expenses_uzs) > 0 && (
+                    <div className="flex justify-between font-medium border-t pt-1 mt-1">
+                      <span>Jami chiqim:</span>
+                      <span className="tabular-nums text-destructive">
+                        −{formatMoney(data.net_income_today.expenses_uzs, "UZS")}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -291,41 +372,395 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Loan limit alerts */}
-      {data?.over_loan_limit.length ? (
-        <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 sm:p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="size-4 text-destructive" />
-            <h2 className="font-semibold text-destructive">
-              Qarz limitidan oshgan do'konlar
-            </h2>
-          </div>
-          <ul className="space-y-2 text-sm">
-            {data.over_loan_limit.map((s) => (
-              <li
-                key={s.id}
-                className="flex items-center justify-between gap-2"
-              >
-                <Link
-                  to={`/shops/${s.id}`}
-                  className="font-medium hover:underline truncate"
+      {/* Charts row */}
+      {data && (
+        <div className="grid gap-3 sm:gap-4 lg:grid-cols-2">
+          {/* Orders by status donut */}
+          <div className="rounded-xl border bg-card p-4 sm:p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <ShoppingCart className="size-4 text-bakery-500" />
+              <h2 className="font-semibold text-sm">Bugungi buyurtmalar holati</h2>
+            </div>
+            <ResponsiveContainer width="100%" height={160}>
+              <PieChart>
+                <Pie
+                  data={[
+                    { name: "Kutilmoqda", value: data.orders_today.pending, fill: C.amber },
+                    { name: "Qisman", value: data.orders_today.partial, fill: C.blue },
+                    { name: "Yetkazildi", value: data.orders_today.delivered, fill: C.green },
+                  ].filter((d) => d.value > 0)}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={45}
+                  outerRadius={65}
+                  paddingAngle={3}
+                  dataKey="value"
                 >
-                  {s.name}
-                </Link>
-                <span className="text-destructive tabular-nums shrink-0 text-xs sm:text-sm">
-                  {formatMoney(s.loan_balance_uzs, "UZS")} /{" "}
-                  {formatMoney(s.loan_limit_uzs, "UZS")}
-                </span>
-              </li>
-            ))}
-          </ul>
+                  {[
+                    { name: "Kutilmoqda", value: data.orders_today.pending, fill: C.amber },
+                    { name: "Qisman", value: data.orders_today.partial, fill: C.blue },
+                    { name: "Yetkazildi", value: data.orders_today.delivered, fill: C.green },
+                  ].filter((d) => d.value > 0).map((entry) => (
+                    <Cell key={entry.name} fill={entry.fill} />
+                  ))}
+                </Pie>
+                <Tooltip content={mkTooltip((v) => `${v} ta`)} />
+                <Legend wrapperStyle={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Production by product bar */}
+          {data.production.today_by_product.length > 0 && (
+            <div className="rounded-xl border bg-card p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Factory className="size-4 text-bakery-500" />
+                <h2 className="font-semibold text-sm">Bugungi ishlab chiqarish (qop)</h2>
+              </div>
+              <ResponsiveContainer width="100%" height={160}>
+                <BarChart
+                  data={data.production.today_by_product.map((p) => ({
+                    name: p.product_name.length > 12 ? p.product_name.slice(0, 12) + "…" : p.product_name,
+                    qop: parseFloat(p.meshok),
+                  }))}
+                  margin={{ top: 4, right: 4, left: -20, bottom: 4 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
+                  <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+                  <YAxis tick={TICK} axisLine={false} tickLine={false} />
+                  <Tooltip content={mkTooltip((v) => `${v} qop`)} />
+                  <Bar dataKey="qop" fill={C.bakery} radius={[3, 3, 0, 0]} name="Qop" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
-      ) : null}
+      )}
+
+      {netIncomeOpen && <NetIncomeHistoryModal onClose={() => setNetIncomeOpen(false)} />}
     </div>
   );
 }
 
+// ─── Net Income History Modal ─────────────────────────────────────────────────
+
+interface NetIncomeDay {
+  date: string;
+  revenue_uzs: string;
+  expenses_uzs: string;
+  net_uzs: string;
+}
+
+function NetIncomeHistoryModal({ onClose }: { onClose: () => void }) {
+  const { data, isLoading } = useQuery<{ results: NetIncomeDay[] }>({
+    queryKey: ["net-income-history"],
+    queryFn: async () =>
+      (await api.get<{ results: NetIncomeDay[] }>("/dashboard/net-income-history/")).data,
+  });
+
+  const chartData = (data?.results ?? []).map((r) => ({
+    date: r.date.slice(5),
+    kirim: Math.round(parseFloat(r.revenue_uzs) / 1_000_000 * 10) / 10,
+    chiqim: Math.round(parseFloat(r.expenses_uzs) / 1_000_000 * 10) / 10,
+    net: Math.round(parseFloat(r.net_uzs) / 1_000_000 * 10) / 10,
+  }));
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-2xl bg-card rounded-t-2xl sm:rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-lg flex items-center gap-2">
+            <TrendingUp className="size-5 text-bakery-500" />
+            Net daromad tarixi (so'nggi 30 kun)
+          </h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="size-5" />
+          </button>
+        </div>
+
+        {isLoading ? (
+          <div className="h-48 flex items-center justify-center text-muted-foreground text-sm">
+            Yuklanmoqda…
+          </div>
+        ) : (
+          <>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={chartData} margin={{ top: 4, right: 4, left: -10, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
+                <XAxis dataKey="date" tick={TICK} axisLine={false} tickLine={false} interval={4} />
+                <YAxis tick={TICK} axisLine={false} tickLine={false} unit="M" />
+                <Tooltip content={mkTooltip((v) => `${v} mln`)} />
+                <ReferenceLine y={0} stroke="hsl(var(--border))" />
+                <Bar dataKey="kirim" fill={C.green} radius={[2, 2, 0, 0]} name="Kirim" />
+                <Bar dataKey="chiqim" fill={C.amber} radius={[2, 2, 0, 0]} name="Chiqim" />
+                <Bar dataKey="net" fill={C.bakery} radius={[2, 2, 0, 0]} name="Net" />
+              </BarChart>
+            </ResponsiveContainer>
+
+            <div className="mt-4 max-h-64 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50 text-muted-foreground sticky top-0">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Sana</th>
+                    <th className="text-right px-3 py-2 font-medium">Kirim</th>
+                    <th className="text-right px-3 py-2 font-medium">Chiqim</th>
+                    <th className="text-right px-3 py-2 font-medium">Net</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {[...(data?.results ?? [])].reverse().map((r) => {
+                    const net = parseFloat(r.net_uzs);
+                    return (
+                      <tr key={r.date} className="hover:bg-muted/20">
+                        <td className="px-3 py-2 tabular-nums">{r.date}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-emerald-600">
+                          {formatMoney(r.revenue_uzs, "UZS")}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-destructive">
+                          {formatMoney(r.expenses_uzs, "UZS")}
+                        </td>
+                        <td className={`px-3 py-2 text-right tabular-nums font-semibold ${net >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+                          {net >= 0 ? "+" : ""}{formatMoney(r.net_uzs, "UZS")}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Driver-specific dashboard ───────────────────────────────────────────────
+
+interface SimplePaged<T> { results: T[]; count: number }
+interface CashRow { currency: string; amount: string }
+
+function DriverDashboard() {
+  const user = useAuth((s) => s.user);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data: summary } = useQuery<DashboardSummary>({
+    queryKey: ["dashboard", "summary"],
+    queryFn: async () => (await api.get<DashboardSummary>("/dashboard/summary/")).data,
+    refetchInterval: 30_000,
+  });
+
+  const { data: myPayments } = useQuery<SimplePaged<CashRow>>({
+    queryKey: ["payments", "mine", today],
+    queryFn: async () =>
+      (await api.get<SimplePaged<CashRow>>(
+        `/finance/payments/?collected_by=${user!.id}&date_from=${today}&date_to=${today}&page_size=500`,
+      )).data,
+    enabled: !!user?.id,
+    refetchInterval: 30_000,
+  });
+
+  const { data: myHandovers } = useQuery<SimplePaged<CashRow & { occurred_at: string; note: string }>>({
+    queryKey: ["handovers", "mine", today],
+    queryFn: async () =>
+      (await api.get<SimplePaged<CashRow & { occurred_at: string; note: string }>>(
+        `/finance/handovers/?driver=${user!.id}&date_from=${today}&date_to=${today}&page_size=500`,
+      )).data,
+    enabled: !!user?.id,
+    refetchInterval: 30_000,
+  });
+
+  const sum = (rows: CashRow[] | undefined, cur: string) =>
+    (rows ?? []).filter((r) => r.currency === cur).reduce((s, r) => s + parseFloat(r.amount), 0);
+
+  const colUzs = sum(myPayments?.results, "UZS");
+  const colUsd = sum(myPayments?.results, "USD");
+  const handUzs = sum(myHandovers?.results, "UZS");
+  const handUsd = sum(myHandovers?.results, "USD");
+  const pendUzs = colUzs - handUzs;
+  const pendUsd = colUsd - handUsd;
+  const hasPending = pendUzs > 0 || pendUsd > 0;
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+          Salom, {user?.display_name}
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          Bugungi yetkazish va naqd pul holati.
+        </p>
+      </div>
+
+      {/* Today's delivery counts */}
+      <div className="grid gap-3 grid-cols-3">
+        <StatCard
+          to="/orders?status=pending"
+          icon={<Clock className="size-5" />}
+          label="Kutilmoqda"
+          primary={summary ? String(summary.orders_today.pending) : "—"}
+          secondary="bugun"
+          loading={!summary}
+          tone="warning"
+        />
+        <StatCard
+          to="/orders?status=partial"
+          icon={<PackageOpen className="size-5" />}
+          label="Qisman"
+          primary={summary ? String(summary.orders_today.partial) : "—"}
+          secondary="bugun"
+          loading={!summary}
+          tone="warning"
+        />
+        <StatCard
+          to="/orders?status=delivered"
+          icon={<CheckCircle2 className="size-5" />}
+          label="Yetkazildi"
+          primary={summary ? String(summary.orders_today.delivered) : "—"}
+          secondary="bugun"
+          loading={!summary}
+          tone="success"
+        />
+      </div>
+
+      {/* Cash summary */}
+      <div className="rounded-xl border bg-card p-4 sm:p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <HandCoins className="size-4 text-bakery-500" />
+          <h2 className="font-semibold">Naqd pul holati (bugun)</h2>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-lg bg-muted/40 p-3">
+            <div className="text-xs text-muted-foreground mb-1">Yig'ildi</div>
+            <div className="font-semibold tabular-nums text-sm sm:text-base">
+              {formatMoney(String(colUzs), "UZS")}
+            </div>
+            {colUsd > 0 && (
+              <div className="text-xs text-muted-foreground tabular-nums">
+                {formatMoney(String(colUsd), "USD")}
+              </div>
+            )}
+          </div>
+          <div className="rounded-lg bg-emerald-500/10 text-emerald-700 p-3">
+            <div className="text-xs opacity-80 mb-1">Topshirildi</div>
+            <div className="font-semibold tabular-nums text-sm sm:text-base">
+              {formatMoney(String(handUzs), "UZS")}
+            </div>
+            {handUsd > 0 && (
+              <div className="text-xs opacity-70 tabular-nums">
+                {formatMoney(String(handUsd), "USD")}
+              </div>
+            )}
+          </div>
+          <div
+            className={`rounded-lg p-3 ${
+              hasPending
+                ? "bg-amber-500/10 text-amber-700"
+                : "bg-muted/40 text-muted-foreground"
+            }`}
+          >
+            <div className="text-xs opacity-80 mb-1">Qoldiq</div>
+            <div className="font-semibold tabular-nums text-sm sm:text-base">
+              {formatMoney(String(pendUzs), "UZS")}
+            </div>
+            {pendUsd !== 0 && (
+              <div className="text-xs opacity-70 tabular-nums">
+                {formatMoney(String(pendUsd), "USD")}
+              </div>
+            )}
+          </div>
+        </div>
+        {hasPending && (
+          <Link
+            to="/finance"
+            className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-amber-500/10 border border-amber-200 px-3 py-2 text-sm text-amber-700 hover:bg-amber-500/20 transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <Truck className="size-4 shrink-0" />
+              Qoldiq pul topshiring
+            </span>
+            <ArrowRight className="size-4 shrink-0" />
+          </Link>
+        )}
+      </div>
+
+      {/* Urgent orders */}
+      <div className="rounded-xl border bg-card p-4 sm:p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold flex items-center gap-2">
+            <AlertTriangle className="size-4 text-amber-600" />
+            Shoshilinch buyurtmalar
+          </h2>
+          <Link
+            to="/orders"
+            className="text-xs text-bakery-600 hover:underline flex items-center gap-1"
+          >
+            Barchasi <ArrowRight className="size-3" />
+          </Link>
+        </div>
+        {!summary || summary.urgent_orders.length === 0 ? (
+          <div className="text-sm text-muted-foreground py-8 text-center border-2 border-dashed rounded-lg">
+            Shoshilinch buyurtmalar yo'q
+          </div>
+        ) : (
+          <ul className="divide-y -mx-4 sm:-mx-5">
+            {summary.urgent_orders.map((o) => {
+              const overdue =
+                o.delivery_time && new Date(o.delivery_time).getTime() < Date.now();
+              return (
+                <li key={o.id}>
+                  <Link
+                    to={`/orders/${o.id}`}
+                    className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium truncate">
+                        #{o.id} · {o.shop_name}
+                      </div>
+                      <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-2 mt-0.5">
+                        <span>{o.status}</span>
+                        {o.delivery_time && (
+                          <span
+                            className={`inline-flex items-center gap-1 ${
+                              overdue ? "text-destructive font-medium" : ""
+                            }`}
+                          >
+                            <Clock className="size-3" />
+                            {formatDeliveryTime(o.delivery_time)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${
+                        o.priority === "urgent"
+                          ? "bg-destructive/15 text-destructive"
+                          : "bg-amber-500/15 text-amber-700"
+                      }`}
+                    >
+                      {o.priority}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared stat card ─────────────────────────────────────────────────────────
+
 function StatCard({
+  to,
   icon,
   label,
   primary,
@@ -333,6 +768,7 @@ function StatCard({
   loading,
   tone,
 }: {
+  to?: string;
   icon: React.ReactNode;
   label: string;
   primary: string;
@@ -348,8 +784,8 @@ function StatCard({
         : tone === "danger"
           ? "text-destructive"
           : "";
-  return (
-    <div className="rounded-xl border bg-card p-3 sm:p-5 hover:border-bakery-200 transition-colors">
+  const inner = (
+    <>
       <div className="flex items-center gap-2 text-muted-foreground text-xs sm:text-sm">
         <span className="shrink-0">{icon}</span>
         <span className="truncate">{label}</span>
@@ -364,6 +800,11 @@ function StatCard({
       <div className="text-[11px] sm:text-xs text-muted-foreground mt-0.5 sm:mt-1 truncate">
         {secondary}
       </div>
-    </div>
+    </>
   );
+  const cls = "rounded-xl border bg-card p-3 sm:p-5 hover:border-bakery-300 hover:shadow-sm transition-all cursor-pointer block";
+  if (to) {
+    return <Link to={to} className={cls}>{inner}</Link>;
+  }
+  return <div className={cls}>{inner}</div>;
 }

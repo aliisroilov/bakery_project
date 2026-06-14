@@ -18,6 +18,7 @@ from .models import (
     KassaAccount,
     KassaTransaction,
     KassaTransactionType,
+    KassaTransfer,
     Payment,
 )
 from .serializers import (
@@ -26,6 +27,7 @@ from .serializers import (
     GeneralExpenseSerializer,
     KassaAccountSerializer,
     KassaTransactionSerializer,
+    KassaTransferSerializer,
     PaymentSerializer,
 )
 
@@ -132,6 +134,81 @@ class PaymentViewSet(viewsets.ModelViewSet):
             _apply_payment_to_shop_balance(payment)
             _apply_payment_to_kassa(payment)
 
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old = serializer.instance
+            old_amount = old.amount
+            old_discount = old.discount
+            old_currency = old.currency
+            old_account_id = old.account_id
+            old_shop_id = old.shop_id
+
+            payment = serializer.save()
+
+            # Reverse old shop balance change.
+            old_shop = Shop.objects.select_for_update().get(pk=old_shop_id)
+            old_delta = old_amount + old_discount
+            if old_currency == "UZS":
+                old_shop.loan_balance_uzs = F("loan_balance_uzs") + old_delta
+            else:
+                old_shop.loan_balance_usd = F("loan_balance_usd") + old_delta
+            old_shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+
+            # Reverse old kassa credit.
+            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+            if old_currency == "UZS":
+                old_account.balance_uzs = F("balance_uzs") - old_amount
+            else:
+                old_account.balance_usd = F("balance_usd") - old_amount
+            old_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Apply new shop balance change.
+            _apply_payment_to_shop_balance(payment)
+
+            # Apply new kassa credit.
+            new_account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
+            if payment.currency == "UZS":
+                new_account.balance_uzs = F("balance_uzs") + payment.amount
+            else:
+                new_account.balance_usd = F("balance_usd") + payment.amount
+            new_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Update linked KassaTransaction.
+            KassaTransaction.objects.filter(
+                reference_model="finance.Payment",
+                reference_id=payment.id,
+            ).update(
+                account=payment.account,
+                currency=payment.currency,
+                amount=payment.amount,
+                occurred_at=payment.received_at,
+            )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            # Reverse shop balance change.
+            shop = Shop.objects.select_for_update().get(pk=instance.shop_id)
+            delta = instance.amount + instance.discount
+            if instance.currency == "UZS":
+                shop.loan_balance_uzs = F("loan_balance_uzs") + delta
+            else:
+                shop.loan_balance_usd = F("loan_balance_usd") + delta
+            shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+
+            # Reverse kassa credit.
+            account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
+            if instance.currency == "UZS":
+                account.balance_uzs = F("balance_uzs") - instance.amount
+            else:
+                account.balance_usd = F("balance_usd") - instance.amount
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            KassaTransaction.objects.filter(
+                reference_model="finance.Payment",
+                reference_id=instance.id,
+            ).delete()
+            instance.delete()
+
 
 # ─────────────────── Expenses ───────────────────
 class ExpenseCategoryViewSet(viewsets.ModelViewSet):
@@ -180,6 +257,57 @@ class GeneralExpenseViewSet(viewsets.ModelViewSet):
                 created_by=self.request.user,
             )
 
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old = serializer.instance
+            old_amount = old.amount
+            old_currency = old.currency
+            old_account_id = old.account_id
+
+            exp = serializer.save()
+
+            # Reverse old deduction from old account.
+            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+            if old_currency == "UZS":
+                old_account.balance_uzs = F("balance_uzs") + old_amount
+            else:
+                old_account.balance_usd = F("balance_usd") + old_amount
+            old_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Apply new deduction to (possibly new) account.
+            new_account = KassaAccount.objects.select_for_update().get(pk=exp.account_id)
+            if exp.currency == "UZS":
+                new_account.balance_uzs = F("balance_uzs") - exp.amount
+            else:
+                new_account.balance_usd = F("balance_usd") - exp.amount
+            new_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Update linked KassaTransaction.
+            KassaTransaction.objects.filter(
+                reference_model="finance.GeneralExpense",
+                reference_id=exp.id,
+            ).update(
+                account=exp.account,
+                currency=exp.currency,
+                amount=-exp.amount,
+                note=exp.title,
+                occurred_at=exp.occurred_at,
+            )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
+            if instance.currency == "UZS":
+                account.balance_uzs = F("balance_uzs") + instance.amount
+            else:
+                account.balance_usd = F("balance_usd") + instance.amount
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+            KassaTransaction.objects.filter(
+                reference_model="finance.GeneralExpense",
+                reference_id=instance.id,
+            ).delete()
+            instance.delete()
+
 
 # ─────────────────── Cash Handover (feature #25) ───────────────────
 class CashHandoverViewSet(viewsets.ModelViewSet):
@@ -201,7 +329,8 @@ class CashHandoverViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         with transaction.atomic():
-            handover = serializer.save()
+            received_by = serializer.validated_data.get("received_by") or self.request.user
+            handover = serializer.save(received_by=received_by)
             account = KassaAccount.objects.select_for_update().get(pk=handover.to_account_id)
             if handover.currency == "UZS":
                 account.balance_uzs = F("balance_uzs") + handover.amount
@@ -219,6 +348,218 @@ class CashHandoverViewSet(viewsets.ModelViewSet):
                 occurred_at=handover.occurred_at,
                 created_by=handover.received_by,
             )
+
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old = serializer.instance
+            old_amount = Decimal(str(old.amount))
+            old_currency = old.currency
+            old_account_id = old.to_account_id
+
+            handover = serializer.save()
+
+            # Reverse old balance on old account.
+            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+            if old_currency == "UZS":
+                old_account.balance_uzs = F("balance_uzs") - old_amount
+            else:
+                old_account.balance_usd = F("balance_usd") - old_amount
+            old_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Apply new balance to (possibly changed) account.
+            new_account = KassaAccount.objects.select_for_update().get(pk=handover.to_account_id)
+            if handover.currency == "UZS":
+                new_account.balance_uzs = F("balance_uzs") + handover.amount
+            else:
+                new_account.balance_usd = F("balance_usd") + handover.amount
+            new_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Sync the linked KassaTransaction row.
+            KassaTransaction.objects.filter(
+                reference_model="finance.CashHandover",
+                reference_id=handover.id,
+            ).update(
+                account=handover.to_account,
+                currency=handover.currency,
+                amount=handover.amount,
+                occurred_at=handover.occurred_at,
+                note=f"Handover · {handover.driver.display_name}",
+            )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            account = KassaAccount.objects.select_for_update().get(pk=instance.to_account_id)
+            if instance.currency == "UZS":
+                account.balance_uzs = F("balance_uzs") - instance.amount
+            else:
+                account.balance_usd = F("balance_usd") - instance.amount
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+            KassaTransaction.objects.filter(
+                reference_model="finance.CashHandover",
+                reference_id=instance.id,
+            ).delete()
+            instance.delete()
+
+
+class KassaTransferViewSet(viewsets.ModelViewSet):
+    """
+    Transfer cash between KassaAccounts (e.g. Rizoxon → Seyf).
+
+    On create:  debit from_account, credit to_account, write two ledger rows.
+    On update:  reverse old balances, apply new balances, sync both ledger rows.
+    On destroy: reverse both balance changes and delete the ledger rows.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = KassaTransferSerializer
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ["occurred_at", "amount"]
+
+    def get_queryset(self):
+        qs = KassaTransfer.objects.select_related(
+            "from_account", "to_account", "created_by"
+        )
+        p = self.request.query_params
+        if date_from := p.get("date_from"):
+            qs = qs.filter(occurred_at__date__gte=date_from)
+        if date_to := p.get("date_to"):
+            qs = qs.filter(occurred_at__date__lte=date_to)
+        return qs
+
+    def perform_create(self, serializer):
+        with transaction.atomic():
+            transfer = serializer.save(created_by=self.request.user)
+
+            # Debit source account.
+            src = KassaAccount.objects.select_for_update().get(pk=transfer.from_account_id)
+            if transfer.currency == "UZS":
+                src.balance_uzs = F("balance_uzs") - transfer.amount
+            else:
+                src.balance_usd = F("balance_usd") - transfer.amount
+            src.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Credit destination account.
+            dst = KassaAccount.objects.select_for_update().get(pk=transfer.to_account_id)
+            if transfer.currency == "UZS":
+                dst.balance_uzs = F("balance_uzs") + transfer.amount
+            else:
+                dst.balance_usd = F("balance_usd") + transfer.amount
+            dst.save(update_fields=["balance_uzs", "balance_usd"])
+
+            ref_note = transfer.note or f"{transfer.from_account.name} → {transfer.to_account.name}"
+
+            # Debit ledger row on source.
+            KassaTransaction.objects.create(
+                account=transfer.from_account,
+                kind=KassaTransactionType.TRANSFER,
+                currency=transfer.currency,
+                amount=-transfer.amount,
+                reference_model="finance.KassaTransfer",
+                reference_id=transfer.id,
+                note=f"O'tkazma → {transfer.to_account.name}" + (f" · {transfer.note}" if transfer.note else ""),
+                occurred_at=transfer.occurred_at,
+                created_by=self.request.user,
+            )
+            # Credit ledger row on destination.
+            KassaTransaction.objects.create(
+                account=transfer.to_account,
+                kind=KassaTransactionType.TRANSFER,
+                currency=transfer.currency,
+                amount=transfer.amount,
+                reference_model="finance.KassaTransfer",
+                reference_id=transfer.id,
+                note=f"O'tkazma ← {transfer.from_account.name}" + (f" · {transfer.note}" if transfer.note else ""),
+                occurred_at=transfer.occurred_at,
+                created_by=self.request.user,
+            )
+
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old = serializer.instance
+            old_amount = Decimal(str(old.amount))
+            old_currency = old.currency
+            old_from_id = old.from_account_id
+            old_to_id = old.to_account_id
+
+            transfer = serializer.save()
+
+            # Reverse old: re-add to source, remove from destination.
+            old_src = KassaAccount.objects.select_for_update().get(pk=old_from_id)
+            if old_currency == "UZS":
+                old_src.balance_uzs = F("balance_uzs") + old_amount
+            else:
+                old_src.balance_usd = F("balance_usd") + old_amount
+            old_src.save(update_fields=["balance_uzs", "balance_usd"])
+
+            old_dst = KassaAccount.objects.select_for_update().get(pk=old_to_id)
+            if old_currency == "UZS":
+                old_dst.balance_uzs = F("balance_uzs") - old_amount
+            else:
+                old_dst.balance_usd = F("balance_usd") - old_amount
+            old_dst.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Apply new: deduct from new source, credit new destination.
+            new_src = KassaAccount.objects.select_for_update().get(pk=transfer.from_account_id)
+            if transfer.currency == "UZS":
+                new_src.balance_uzs = F("balance_uzs") - transfer.amount
+            else:
+                new_src.balance_usd = F("balance_usd") - transfer.amount
+            new_src.save(update_fields=["balance_uzs", "balance_usd"])
+
+            new_dst = KassaAccount.objects.select_for_update().get(pk=transfer.to_account_id)
+            if transfer.currency == "UZS":
+                new_dst.balance_uzs = F("balance_uzs") + transfer.amount
+            else:
+                new_dst.balance_usd = F("balance_usd") + transfer.amount
+            new_dst.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Sync both linked KassaTransaction rows (debit row has amount<0).
+            KassaTransaction.objects.filter(
+                reference_model="finance.KassaTransfer",
+                reference_id=transfer.id,
+                amount__lt=0,
+            ).update(
+                account=transfer.from_account,
+                currency=transfer.currency,
+                amount=-transfer.amount,
+                occurred_at=transfer.occurred_at,
+                note=f"O'tkazma → {transfer.to_account.name}" + (f" · {transfer.note}" if transfer.note else ""),
+            )
+            KassaTransaction.objects.filter(
+                reference_model="finance.KassaTransfer",
+                reference_id=transfer.id,
+                amount__gt=0,
+            ).update(
+                account=transfer.to_account,
+                currency=transfer.currency,
+                amount=transfer.amount,
+                occurred_at=transfer.occurred_at,
+                note=f"O'tkazma ← {transfer.from_account.name}" + (f" · {transfer.note}" if transfer.note else ""),
+            )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            # Reverse source debit.
+            src = KassaAccount.objects.select_for_update().get(pk=instance.from_account_id)
+            if instance.currency == "UZS":
+                src.balance_uzs = F("balance_uzs") + instance.amount
+            else:
+                src.balance_usd = F("balance_usd") + instance.amount
+            src.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Reverse destination credit.
+            dst = KassaAccount.objects.select_for_update().get(pk=instance.to_account_id)
+            if instance.currency == "UZS":
+                dst.balance_uzs = F("balance_uzs") - instance.amount
+            else:
+                dst.balance_usd = F("balance_usd") - instance.amount
+            dst.save(update_fields=["balance_uzs", "balance_usd"])
+
+            KassaTransaction.objects.filter(
+                reference_model="finance.KassaTransfer",
+                reference_id=instance.id,
+            ).delete()
+            instance.delete()
 
 
 class DriverHandoverReportView(APIView):

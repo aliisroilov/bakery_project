@@ -14,7 +14,7 @@ from apps.production.models import Production
 
 from .models import PaymentKind, SalaryPayment, SalaryRate
 from .serializers import SalaryPaymentSerializer, SalaryRateSerializer
-from .utils import calculate_earned
+from .utils import calculate_earned_period
 
 
 class SalaryRateViewSet(viewsets.ModelViewSet):
@@ -79,6 +79,65 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
                 created_by=self.request.user,
             )
 
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old = serializer.instance
+            old_sign = -1 if old.kind != "deduction" else 1
+            old_delta = old.amount * old_sign
+            old_currency = old.currency
+            old_account_id = old.account_id
+
+            payment = serializer.save()
+
+            new_sign = -1 if payment.kind != "deduction" else 1
+            new_delta = payment.amount * new_sign
+
+            # Reverse old transaction from old account.
+            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+            if old_currency == "UZS":
+                old_account.balance_uzs = F("balance_uzs") - old_delta
+            else:
+                old_account.balance_usd = F("balance_usd") - old_delta
+            old_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Apply new transaction to (possibly new) account.
+            new_account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
+            if payment.currency == "UZS":
+                new_account.balance_uzs = F("balance_uzs") + new_delta
+            else:
+                new_account.balance_usd = F("balance_usd") + new_delta
+            new_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Update the linked KassaTransaction record if it exists.
+            KassaTransaction.objects.filter(
+                reference_model="salary.SalaryPayment",
+                reference_id=payment.id,
+            ).update(
+                account=payment.account,
+                kind=KIND_TO_KASSA_KIND.get(payment.kind, KassaTransactionType.SALARY),
+                currency=payment.currency,
+                amount=new_delta,
+                occurred_at=payment.occurred_at,
+                note=f"{payment.get_kind_display()} · {payment.user.display_name}",
+            )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            sign = -1 if instance.kind != "deduction" else 1
+            delta = instance.amount * sign
+            account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
+            # Reverse the original deduction from kassa.
+            if instance.currency == "UZS":
+                account.balance_uzs = F("balance_uzs") - delta
+            else:
+                account.balance_usd = F("balance_usd") - delta
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+            KassaTransaction.objects.filter(
+                reference_model="salary.SalaryPayment",
+                reference_id=instance.id,
+            ).delete()
+            instance.delete()
+
 
 class ProductionBreakdownView(APIView):
     """Feature #21: per-day qop breakdown for a nonvoy employee.
@@ -94,14 +153,23 @@ class ProductionBreakdownView(APIView):
         if not user_id:
             return Response({"results": [], "count": 0})
 
-        productions = (
+        # Both individual and group productions count the FULL quantity for this
+        # user — matching the salary calculation (no split among group members).
+        individual = list(
             Production.objects.filter(nonvoy_id=user_id)
             .select_related("product")
             .order_by("-occurred_at")
         )
+        group_prods = list(
+            Production.objects.filter(group__members__id=user_id, nonvoy__isnull=True)
+            .select_related("product", "group")
+            .order_by("-occurred_at")
+        )
+
+        rows = [p for p in individual] + [p for p in group_prods]
 
         by_date: dict[str, dict] = {}
-        for p in productions:
+        for p in rows:
             d = p.occurred_at.date().isoformat()
             entry = by_date.setdefault(
                 d,
@@ -174,19 +242,34 @@ class SalaryEmployeeSummaryView(APIView):
             .order_by("role", "username")
         )
 
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+
         results = []
         for u in users:
             rate_obj = getattr(u, "salary_rate", None)
-            earned = calculate_earned(u, rate_obj) if rate_obj else Decimal("0.00")
-            initial = Decimal(rate_obj.initial_balance) if rate_obj else Decimal("0.00")
+            # Per-period model — each month/range stands alone. Everything below
+            # is scoped to [date_from, date_to]. "Hisoblangan" = earned in range.
+            earned_period = (
+                calculate_earned_period(u, rate_obj, date_from, date_to)
+                if rate_obj
+                else Decimal("0.00")
+            )
 
+            # Payments made within the selected range.
             payments = SalaryPayment.objects.filter(user=u)
+            if date_from:
+                payments = payments.filter(occurred_at__date__gte=date_from)
+            if date_to:
+                payments = payments.filter(occurred_at__date__lte=date_to)
             by_kind = {k: Decimal("0.00") for k in ["salary", "advance", "bonus", "deduction"]}
             for row in payments.values("kind").annotate(total=Sum("amount")):
                 by_kind[row["kind"]] = row["total"] or Decimal("0.00")
 
-            paid_out = by_kind["salary"] + by_kind["advance"] + by_kind["bonus"]
-            remaining = earned + initial - paid_out + by_kind["deduction"]
+            # What we still owe for THIS range = earned − (salary + advance +
+            # deduction) paid in range. Bonus is discretionary, doesn't reduce debt.
+            paid_out = by_kind["salary"] + by_kind["advance"] + by_kind["deduction"]
+            remaining = earned_period - paid_out
 
             last = payments.order_by("-occurred_at").first()
 
@@ -211,8 +294,9 @@ class SalaryEmployeeSummaryView(APIView):
                     u.produced_product.name if u.produced_product_id else None
                 ),
                 "rate": rate_data,
-                "earned": str(earned),
-                "initial_balance": str(initial),
+                # Earned within the selected range — "Hisoblangan".
+                "earned_period": str(earned_period),
+                # Payments made within the selected range.
                 "paid_salary": str(by_kind["salary"]),
                 "paid_advance": str(by_kind["advance"]),
                 "paid_bonus": str(by_kind["bonus"]),

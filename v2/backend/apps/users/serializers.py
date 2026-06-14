@@ -1,7 +1,7 @@
 """User serializers."""
 from rest_framework import serializers
 
-from .models import User, UserActivityLog
+from .models import EmployeeGroup, User, UserActivityLog
 
 
 class CurrentUserSerializer(serializers.ModelSerializer):
@@ -36,7 +36,12 @@ class UserSerializer(serializers.ModelSerializer):
             "phone", "is_active", "is_archived", "date_joined",
             "produced_product", "produced_product_name",
         ]
-        read_only_fields = ["date_joined", "display_name", "produced_product_name"]
+        # is_archived is read-only: archiving/restoring must go through the
+        # DELETE (archive) and unarchive action so group/shop detachment and
+        # restoration run. A bare PATCH must not silently flip it.
+        read_only_fields = [
+            "date_joined", "display_name", "produced_product_name", "is_archived",
+        ]
 
     def create(self, validated_data):
         password = validated_data.pop("password", None) or User.objects.make_random_password()
@@ -52,6 +57,39 @@ class UserSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
         instance.save()
+        return instance
+
+
+class EmployeeGroupSerializer(serializers.ModelSerializer):
+    member_ids = serializers.PrimaryKeyRelatedField(
+        source="members",
+        many=True,
+        queryset=User.objects.filter(role="nonvoy"),
+        required=False,
+    )
+    members_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EmployeeGroup
+        fields = ["id", "name", "member_ids", "members_display", "note", "created_at"]
+        read_only_fields = ["created_at"]
+
+    def get_members_display(self, obj):
+        return [{"id": u.id, "display_name": u.display_name} for u in obj.members.all()]
+
+    def create(self, validated_data):
+        members = validated_data.pop("members", [])
+        group = EmployeeGroup.objects.create(**validated_data)
+        group.members.set(members)
+        return group
+
+    def update(self, instance, validated_data):
+        members = validated_data.pop("members", None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        instance.save()
+        if members is not None:
+            instance.members.set(members)
         return instance
 
 

@@ -1,5 +1,5 @@
 """Core views — dashboard summary + misc cross-app endpoints."""
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 
 from django.db.models import Sum, F, Q
 from django.utils import timezone
@@ -251,6 +251,82 @@ class DashboardSummaryView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class NetIncomeHistoryView(APIView):
+    """Daily net income for the requested date range (default: last 30 days)."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        p = request.query_params
+        today = timezone.localdate()
+        try:
+            dt_to = date.fromisoformat(p["date_to"]) if "date_to" in p else today
+            dt_from = date.fromisoformat(p["date_from"]) if "date_from" in p else (today - timedelta(days=29))
+        except ValueError:
+            dt_from = today - timedelta(days=29)
+            dt_to = today
+
+        results = []
+        current = dt_from
+        while current <= dt_to:
+            start = timezone.make_aware(datetime.combine(current, time.min))
+            end = timezone.make_aware(datetime.combine(current, time.max))
+
+            revenue_uzs = (
+                Payment.objects.filter(received_at__range=(start, end), currency="UZS")
+                .aggregate(s=Sum("amount"))["s"] or 0
+            )
+            revenue_usd = (
+                Payment.objects.filter(received_at__range=(start, end), currency="USD")
+                .aggregate(s=Sum("amount"))["s"] or 0
+            )
+
+            purchase_uzs = (
+                IngredientPurchase.objects.filter(occurred_at__range=(start, end), currency="UZS")
+                .aggregate(s=Sum("total_price"))["s"] or 0
+            )
+            purchase_usd = (
+                IngredientPurchase.objects.filter(occurred_at__range=(start, end), currency="USD")
+                .aggregate(s=Sum("total_price"))["s"] or 0
+            )
+
+            expense_uzs = (
+                GeneralExpense.objects.filter(occurred_at__range=(start, end), currency="UZS")
+                .aggregate(s=Sum("amount"))["s"] or 0
+            )
+            expense_usd = (
+                GeneralExpense.objects.filter(occurred_at__range=(start, end), currency="USD")
+                .aggregate(s=Sum("amount"))["s"] or 0
+            )
+
+            salary_uzs = (
+                SalaryPayment.objects.filter(occurred_at__range=(start, end), currency="UZS")
+                .exclude(kind="deduction")
+                .aggregate(s=Sum("amount"))["s"] or 0
+            )
+            salary_usd = (
+                SalaryPayment.objects.filter(occurred_at__range=(start, end), currency="USD")
+                .exclude(kind="deduction")
+                .aggregate(s=Sum("amount"))["s"] or 0
+            )
+
+            expenses_uzs = purchase_uzs + expense_uzs + salary_uzs
+            expenses_usd = purchase_usd + expense_usd + salary_usd
+
+            results.append({
+                "date": current.isoformat(),
+                "revenue_uzs": str(revenue_uzs),
+                "expenses_uzs": str(expenses_uzs),
+                "net_uzs": str(revenue_uzs - expenses_uzs),
+                "revenue_usd": str(revenue_usd),
+                "expenses_usd": str(expenses_usd),
+                "net_usd": str(revenue_usd - expenses_usd),
+            })
+            current += timedelta(days=1)
+
+        return Response({"results": results, "count": len(results)})
 
 
 class NotificationsView(APIView):

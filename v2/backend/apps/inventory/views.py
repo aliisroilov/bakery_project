@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
@@ -6,13 +7,16 @@ from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.finance.models import KassaAccount, KassaTransaction, KassaTransactionType
 from apps.products.pricing import recalc_products_using_ingredient
+from apps.production.models import InventoryRevisionReport
 
 from .models import Ingredient, ProductRecipe, Purchase, Unit
 from .serializers import (
     IngredientSerializer,
+    InventoryRevisionSerializer,
     ProductRecipeSerializer,
     PurchaseSerializer,
     UnitSerializer,
@@ -43,6 +47,16 @@ class IngredientViewSet(viewsets.ModelViewSet):
         if low in ("1", "true"):
             qs = qs.filter(quantity__lte=F("low_stock_threshold"))
         return qs
+
+    def perform_destroy(self, instance):
+        instance.archive()
+
+    @action(detail=True, methods=["post"])
+    def unarchive(self, request, pk=None):
+        """Restore an archived ingredient."""
+        ing = self.get_object()
+        ing.unarchive()
+        return Response(IngredientSerializer(ing).data)
 
     @action(detail=True, methods=["post"], url_path="adjust")
     def adjust_stock(self, request, pk=None):
@@ -145,6 +159,83 @@ class PurchaseViewSet(viewsets.ModelViewSet):
             if purchase.currency == "UZS":
                 recalc_products_using_ingredient(purchase.ingredient_id)
 
+    def perform_update(self, serializer):
+        with transaction.atomic():
+            old = serializer.instance
+            old_currency = old.currency
+            old_account_id = old.account_id
+            old_total = Decimal(str(old.total_price))
+            old_qty = Decimal(str(old.quantity))
+
+            # Recompute new unit_price before saving.
+            new_quantity = serializer.validated_data.get("quantity", old.quantity)
+            new_total = serializer.validated_data.get("total_price", old.total_price)
+            new_qty = Decimal(str(new_quantity))
+            new_total_dec = Decimal(str(new_total))
+            new_unit_price = (new_total_dec / new_qty) if new_qty else Decimal("0")
+            purchase = serializer.save(unit_price=new_unit_price)
+
+            # Reverse old ingredient stock change.
+            ing = Ingredient.objects.select_for_update().get(pk=purchase.ingredient_id)
+            ing.quantity = ing.quantity - old_qty + new_qty
+            ing.save(update_fields=["quantity"])
+
+            # Reverse old kassa deduction, apply new.
+            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+            if old_currency == "UZS":
+                old_account.balance_uzs = F("balance_uzs") + old_total
+            else:
+                old_account.balance_usd = F("balance_usd") + old_total
+            old_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            new_account = KassaAccount.objects.select_for_update().get(pk=purchase.account_id)
+            if purchase.currency == "UZS":
+                new_account.balance_uzs = F("balance_uzs") - purchase.total_price
+            else:
+                new_account.balance_usd = F("balance_usd") - purchase.total_price
+            new_account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Update linked KassaTransaction.
+            KassaTransaction.objects.filter(
+                reference_model="inventory.Purchase",
+                reference_id=purchase.id,
+            ).update(
+                account=purchase.account,
+                currency=purchase.currency,
+                amount=-purchase.total_price,
+                occurred_at=purchase.occurred_at,
+            )
+
+            if purchase.currency == "UZS":
+                recalc_products_using_ingredient(purchase.ingredient_id)
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            # Reverse kassa.
+            account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
+            if instance.currency == "UZS":
+                account.balance_uzs = F("balance_uzs") + instance.total_price
+            else:
+                account.balance_usd = F("balance_usd") + instance.total_price
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            # Reverse ingredient stock.
+            ing = Ingredient.objects.select_for_update().get(pk=instance.ingredient_id)
+            ing.quantity = ing.quantity - instance.quantity
+            ing.save(update_fields=["quantity"])
+
+            # Remove KassaTransaction.
+            KassaTransaction.objects.filter(
+                reference_model="inventory.Purchase",
+                reference_id=instance.id,
+            ).delete()
+
+            ingredient_id = instance.ingredient_id
+            instance.delete()
+
+            if True:  # always recalc after any purchase removal
+                recalc_products_using_ingredient(ingredient_id)
+
 
 class ProductRecipeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -171,3 +262,82 @@ class ProductRecipeViewSet(viewsets.ModelViewSet):
         product = instance.product
         instance.delete()
         recalc_product_cost(product)
+
+
+class InventoryRevisionViewSet(viewsets.ReadOnlyModelViewSet):
+    """List revision history. Use /batch/ to create a batch revision."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = InventoryRevisionSerializer
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ["created_at"]
+
+    def get_queryset(self):
+        qs = InventoryRevisionReport.objects.select_related(
+            "ingredient", "ingredient__unit", "user"
+        ).filter(item_type=InventoryRevisionReport.ItemType.INGREDIENT)
+        p = self.request.query_params
+        if batch := p.get("batch_id"):
+            qs = qs.filter(batch_id=batch)
+        if date_from := p.get("date_from"):
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to := p.get("date_to"):
+            qs = qs.filter(created_at__date__lte=date_to)
+        return qs.order_by("-created_at")
+
+    @action(detail=False, methods=["post"], url_path="batch")
+    def batch_revision(self, request):
+        """
+        Batch inventory revision — adjust multiple ingredients in one atomic transaction.
+
+        Body: { "items": [{"ingredient_id": N, "new_quantity": "X", "note": "..."}], "note": "..." }
+        Returns list of created InventoryRevisionReport rows, grouped by batch_id.
+        """
+        items_data = request.data.get("items", [])
+        session_note = request.data.get("note", "")
+
+        if not items_data:
+            return Response({"detail": "items talab qilinadi."}, status=status.HTTP_400_BAD_REQUEST)
+
+        batch_id = uuid.uuid4()
+        created = []
+
+        with transaction.atomic():
+            for row in items_data:
+                try:
+                    ing_id = int(row["ingredient_id"])
+                    new_qty = Decimal(str(row["new_quantity"]))
+                except (KeyError, ValueError, InvalidOperation):
+                    return Response(
+                        {"detail": f"ingredient_id yoki new_quantity noto'g'ri: {row}"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if new_qty < 0:
+                    return Response(
+                        {"detail": "new_quantity manfiy bo'lishi mumkin emas."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                ing = Ingredient.objects.select_for_update().get(pk=ing_id)
+                old_qty = ing.quantity
+                ing.quantity = new_qty
+                ing.save(update_fields=["quantity"])
+
+                rev = InventoryRevisionReport.objects.create(
+                    item_type=InventoryRevisionReport.ItemType.INGREDIENT,
+                    ingredient=ing,
+                    old_quantity=old_qty,
+                    new_quantity=new_qty,
+                    note=row.get("note", "") or session_note,
+                    batch_id=batch_id,
+                    user=request.user if request.user.is_authenticated else None,
+                )
+                created.append(rev)
+
+        return Response(
+            {
+                "batch_id": str(batch_id),
+                "count": len(created),
+                "items": InventoryRevisionSerializer(created, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )

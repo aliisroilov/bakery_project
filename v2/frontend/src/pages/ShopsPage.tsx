@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Store, AlertTriangle, Search, Plus, Pencil } from "lucide-react";
+import { Store, AlertTriangle, Search, Plus, Pencil, Tag, Archive, ArchiveRestore } from "lucide-react";
 import { api } from "../lib/api";
 import type { Paginated, Region, Shop } from "../lib/types";
 import { formatMoney } from "../lib/utils";
@@ -260,6 +260,16 @@ function ShopModal({ shop, onClose }: { shop?: Shop; onClose: () => void }) {
     },
   });
 
+  const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const archive = useMutation({
+    mutationFn: () =>
+      api.patch(`/shops/${shop!.id}/`, { is_archived: !shop!.is_archived }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["shops"] });
+      onClose();
+    },
+  });
+
   const canSave = name.trim().length > 0 && region !== "";
 
   return (
@@ -358,20 +368,70 @@ function ShopModal({ shop, onClose }: { shop?: Shop; onClose: () => void }) {
             Saqlashda xatolik.
           </div>
         )}
-        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="h-10 px-4 rounded-lg border text-sm hover:bg-muted"
-          >
-            Bekor qilish
-          </button>
-          <button
-            disabled={!canSave || save.isPending}
-            onClick={() => save.mutate()}
-            className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
-          >
-            {save.isPending ? "Saqlanmoqda…" : "Saqlash"}
-          </button>
+        {isEdit && shop && (
+          <div className="mt-4 pt-3 border-t space-y-2">
+            <Link
+              to={`/shops/${shop.id}`}
+              onClick={onClose}
+              className="inline-flex items-center gap-1.5 text-sm text-bakery-600 hover:underline"
+            >
+              <Tag className="size-4" /> Mahsulot narxlarini o'rnatish
+            </Link>
+            <p className="text-xs text-muted-foreground">
+              Do'kon sahifasida har bir mahsulot uchun maxsus narx belgilash mumkin.
+            </p>
+          </div>
+        )}
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-between gap-2">
+          {isEdit && shop && (
+            <div className="flex items-center gap-2">
+              {!archiveConfirm ? (
+                <button
+                  type="button"
+                  onClick={() => setArchiveConfirm(true)}
+                  className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-amber-300 text-amber-700 text-sm hover:bg-amber-50"
+                >
+                  {shop.is_archived ? (
+                    <><ArchiveRestore className="size-4" /> Arxivdan chiqarish</>
+                  ) : (
+                    <><Archive className="size-4" /> Arxivlash</>
+                  )}
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-amber-700">Ishonchingiz komilmi?</span>
+                  <button
+                    onClick={() => archive.mutate()}
+                    disabled={archive.isPending}
+                    className="h-8 px-3 rounded-lg bg-amber-600 text-white text-xs hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    {archive.isPending ? "…" : "Ha"}
+                  </button>
+                  <button
+                    onClick={() => setArchiveConfirm(false)}
+                    className="h-8 px-3 rounded-lg border text-xs hover:bg-muted"
+                  >
+                    Bekor
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex gap-2 sm:ml-auto">
+            <button
+              onClick={onClose}
+              className="h-10 px-4 rounded-lg border text-sm hover:bg-muted"
+            >
+              Bekor qilish
+            </button>
+            <button
+              disabled={!canSave || save.isPending}
+              onClick={() => save.mutate()}
+              className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
+            >
+              {save.isPending ? "Saqlanmoqda…" : "Saqlash"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

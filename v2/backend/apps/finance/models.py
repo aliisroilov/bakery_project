@@ -233,6 +233,46 @@ class GeneralExpense(TimestampedModel):
         return f"{self.title} · {self.amount} {self.currency}"
 
 
+# ────────────────── Kassa Transfer (account → account) ──────────────────
+class KassaTransfer(TimestampedModel):
+    """
+    Money moved from one KassaAccount to another (e.g. Rizoxon → Seyf).
+
+    Creates two KassaTransaction rows (debit + credit) and adjusts both
+    account cached balances atomically.
+    """
+
+    from_account = models.ForeignKey(
+        KassaAccount,
+        on_delete=models.PROTECT,
+        related_name="transfers_out",
+    )
+    to_account = models.ForeignKey(
+        KassaAccount,
+        on_delete=models.PROTECT,
+        related_name="transfers_in",
+    )
+    currency = models.CharField(max_length=3, choices=Currency.CHOICES, default=Currency.UZS)
+    amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES
+    )
+    occurred_at = models.DateTimeField(db_index=True)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kassa_transfers",
+    )
+
+    class Meta:
+        ordering = ["-occurred_at"]
+
+    def __str__(self) -> str:
+        return f"{self.from_account.name} → {self.to_account.name}: {self.amount} {self.currency}"
+
+
 # ────────────────── Cash handover (driver → office) ──────────────────
 class CashHandover(TimestampedModel):
     """

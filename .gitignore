@@ -49,5 +49,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# ─── Data / exports ───
+*.xlsx
+*.csv
+
 # ─── Claude / AI tooling ───
 .claude/

@@ -25,20 +25,20 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { cn, formatMoney } from "../lib/utils";
 
-const NAV = [
-  { to: "/", label: "Bosh sahifa", icon: LayoutDashboard },
-  { to: "/orders", label: "Buyurtmalar", icon: ShoppingCart },
-  { to: "/regions", label: "Hududlar", icon: MapPin },
-  { to: "/shops", label: "Do'konlar", icon: Store },
-  { to: "/products", label: "Mahsulotlar", icon: Package },
-  { to: "/inventory", label: "Xomashyo", icon: Wheat },
-  { to: "/production", label: "Ishlab chiqarish", icon: Factory },
-  { to: "/salary", label: "Oylik", icon: DollarSign },
-  { to: "/finance", label: "Kassa / Moliya", icon: Wallet },
-  { to: "/reports", label: "Hisobotlar", icon: BarChart3 },
-  { to: "/users", label: "Xodimlar", icon: Users },
-  { to: "/logs", label: "Loglar", icon: Activity },
-  { to: "/archive", label: "Arxiv", icon: Archive },
+const ALL_NAV = [
+  { to: "/", label: "Bosh sahifa", icon: LayoutDashboard, roles: null },
+  { to: "/orders", label: "Buyurtmalar", icon: ShoppingCart, roles: null },
+  { to: "/regions", label: "Hududlar", icon: MapPin, roles: ["manager", "accountant", "viewer"] },
+  { to: "/shops", label: "Do'konlar", icon: Store, roles: ["manager", "accountant", "driver", "viewer"] },
+  { to: "/products", label: "Mahsulotlar", icon: Package, roles: ["manager", "accountant", "viewer"] },
+  { to: "/inventory", label: "Xomashyo", icon: Wheat, roles: ["manager", "accountant"] },
+  { to: "/production", label: "Ishlab chiqarish", icon: Factory, roles: ["manager", "accountant", "nonvoy"] },
+  { to: "/salary", label: "Oylik", icon: DollarSign, roles: ["manager", "accountant"] },
+  { to: "/finance", label: "Kassa / Moliya", icon: Wallet, roles: ["manager", "accountant", "driver"] },
+  { to: "/reports", label: "Hisobotlar", icon: BarChart3, roles: ["manager", "accountant"] },
+  { to: "/users", label: "Xodimlar", icon: Users, roles: ["manager"] },
+  { to: "/logs", label: "Loglar", icon: Activity, roles: ["manager", "accountant"] },
+  { to: "/archive", label: "Arxiv", icon: Archive, roles: ["manager"] },
 ];
 
 interface LowStockNotification {
@@ -77,6 +77,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
+  const role = user?.role ?? "";
+  const NAV = ALL_NAV.filter((item) => item.roles === null || item.roles.includes(role));
+
   // Auto-close mobile sidebar on route change.
   useEffect(() => {
     setSidebarOpen(false);
@@ -103,7 +106,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <aside
         className={cn(
-          "fixed md:static inset-y-0 left-0 z-50 w-[260px] md:w-auto",
+          "fixed md:sticky md:top-0 md:h-screen inset-y-0 left-0 z-50 w-[260px] md:w-auto",
           "border-r bg-card flex flex-col",
           "transform transition-transform md:transform-none",
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",

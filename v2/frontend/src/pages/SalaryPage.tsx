@@ -10,10 +10,15 @@ import {
   Settings2,
   Users,
   Wallet,
+  TrendingUp,
 } from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 import { api } from "../lib/api";
+import { C, TICK, mkTooltip } from "../lib/chart";
 import type { KassaAccount, Paginated } from "../lib/types";
-import { formatMoney } from "../lib/utils";
+import { formatMoney, fmtDate, nowTashkentStr, tashkentToISO } from "../lib/utils";
 
 type Kind = "salary" | "advance" | "bonus" | "deduction";
 type RateType = "per_unit" | "per_meshok" | "per_week" | "fixed_monthly" | "per_product";
@@ -51,8 +56,8 @@ interface EmployeeSummary {
   role: string;
   produced_product_name: string | null;
   rate: EmployeeRate | null;
-  earned: string;
-  initial_balance: string;
+  earned_period: string;    // salary accrued within the selected date range
+  // Payments made within the selected date range
   paid_salary: string;
   paid_advance: string;
   paid_bonus: string;
@@ -96,8 +101,56 @@ const RATE_TYPE_LABEL: Record<RateType, string> = {
   per_product: "Mahsulot bo'yicha",
 };
 
+// ─── Salary chart ─────────────────────────────────────────────────────────────
+function SalaryChart({ employees }: { employees: EmployeeSummary[] }) {
+  const chartData = useMemo(() => {
+    return employees
+      .filter((e) => {
+        const ep = parseFloat(e.earned_period);
+        const paid = parseFloat(e.paid_salary) + parseFloat(e.paid_advance);
+        return ep > 0 || paid > 0;
+      })
+      .slice(0, 12)
+      .map((e) => ({
+        name: e.display_name.split(" ")[0],
+        // Period-earned vs period-paid — both scoped to the same date range
+        Hisoblangan: Math.round(parseFloat(e.earned_period) / 1000),
+        "To'langan": Math.round(
+          (parseFloat(e.paid_salary) + parseFloat(e.paid_advance)) / 1000
+        ),
+      }));
+  }, [employees]);
+
+  if (chartData.length < 2) return null;
+
+  return (
+    <div className="rounded-xl border bg-card p-4 sm:p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <TrendingUp className="size-4 text-bakery-500" />
+        <h3 className="font-semibold text-sm">Hisoblangan vs To'langan (ming UZS)</h3>
+      </div>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" className="opacity-20" />
+          <XAxis dataKey="name" tick={TICK} axisLine={false} tickLine={false} />
+          <YAxis tick={TICK} axisLine={false} tickLine={false} unit="K" />
+          <Tooltip content={mkTooltip((v) => `${v}K UZS`)} />
+          <Legend wrapperStyle={{ fontSize: 12, color: "hsl(var(--muted-foreground))" }} />
+          <Bar dataKey="Hisoblangan" fill={C.indigo} radius={[3, 3, 0, 0]} />
+          <Bar dataKey="To'langan" fill={C.green} radius={[3, 3, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 export function SalaryPage() {
+  const today = nowTashkentStr().slice(0, 10);
+  const monthStart = today.slice(0, 8) + "01";
+
   const [roleFilter, setRoleFilter] = useState<string>("");
+  const [dateFrom, setDateFrom] = useState(monthStart);
+  const [dateTo, setDateTo] = useState(today);
   const [payingFor, setPayingFor] = useState<EmployeeSummary | null>(null);
   const [editingRate, setEditingRate] = useState<EmployeeSummary | null>(null);
   const [historyFor, setHistoryFor] = useState<EmployeeSummary | null>(null);
@@ -107,22 +160,26 @@ export function SalaryPage() {
     results: EmployeeSummary[];
     count: number;
   }>({
-    queryKey: ["salary", "employees", roleFilter],
+    queryKey: ["salary", "employees", roleFilter, dateFrom, dateTo],
     queryFn: async () => {
-      const params = roleFilter ? `?role=${roleFilter}` : "";
-      return (await api.get(`/salary/employees/${params}`)).data;
+      const params = new URLSearchParams();
+      if (roleFilter) params.set("role", roleFilter);
+      params.set("date_from", dateFrom);
+      params.set("date_to", dateTo);
+      return (await api.get(`/salary/employees/?${params}`)).data;
     },
   });
 
   const { data: payments } = useQuery<Paginated<Payment>>({
-    queryKey: ["salary", "payments"],
+    queryKey: ["salary", "payments", dateFrom, dateTo],
     queryFn: async () =>
-      (await api.get<Paginated<Payment>>("/salary/payments/")).data,
+      (await api.get<Paginated<Payment>>(`/salary/payments/?date_from=${dateFrom}&date_to=${dateTo}`)).data,
   });
 
   const totals = useMemo(() => {
     const rows = summary?.results ?? [];
     const totalRemaining = rows.reduce((a, r) => a + parseFloat(r.remaining || "0"), 0);
+    // Period payments (salary + advance + bonus paid within the date filter)
     const totalPaid = rows.reduce(
       (a, r) =>
         a +
@@ -131,7 +188,11 @@ export function SalaryPage() {
         parseFloat(r.paid_bonus || "0"),
       0,
     );
-    const totalEarned = rows.reduce((a, r) => a + parseFloat(r.earned || "0"), 0);
+    // "Hisoblangan" = salary accrued within the selected period (date_from–date_to).
+    // For fixed_monthly workers: rate × months_in_range.
+    // For per-meshok/unit/product: production logged in the range × rate.
+    // This is the number the user expects: "how much was earned THIS MONTH".
+    const totalEarned = rows.reduce((a, r) => a + parseFloat(r.earned_period || "0"), 0);
     return { totalRemaining, totalPaid, totalEarned };
   }, [summary]);
 
@@ -154,18 +215,50 @@ export function SalaryPage() {
         </button>
       </div>
 
+      {/* Date filter */}
+      <div className="rounded-xl border bg-card p-3 sm:p-4 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">Davr boshi</label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="h-10 rounded-lg border bg-background px-3 text-sm"
+          />
+        </div>
+        <div>
+          <label className="block text-xs text-muted-foreground mb-1">Davr oxiri</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="h-10 rounded-lg border bg-background px-3 text-sm"
+          />
+        </div>
+        <div className="flex items-end gap-2">
+          <button
+            onClick={() => { setDateFrom(monthStart); setDateTo(today); }}
+            className="h-10 px-3 rounded-lg border text-xs hover:bg-muted"
+          >
+            Bu oy
+          </button>
+        </div>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard
           label="Hisoblangan jami"
           value={formatMoney(totals.totalEarned, "UZS")}
           tone="info"
           icon={<Receipt className="size-4" />}
+          subtitle={`${dateFrom} — ${dateTo}`}
         />
         <StatCard
           label="To'langan jami"
           value={formatMoney(totals.totalPaid, "UZS")}
           tone="success"
           icon={<Banknote className="size-4" />}
+          subtitle={`${dateFrom} — ${dateTo}`}
         />
         <StatCard
           label="Qoldiq (qarzdormiz)"
@@ -174,6 +267,11 @@ export function SalaryPage() {
           icon={<Wallet className="size-4" />}
         />
       </div>
+
+      {/* Chart */}
+      {(summary?.results.length ?? 0) > 0 && (
+        <SalaryChart employees={summary!.results} />
+      )}
 
       <div className="rounded-xl border bg-card p-3 sm:p-4 flex items-center gap-2 sm:gap-3">
         <Users className="size-4 text-muted-foreground shrink-0" />
@@ -220,7 +318,7 @@ export function SalaryPage() {
       <div className="rounded-xl border bg-card overflow-hidden">
         <div className="px-4 sm:px-5 py-3 border-b flex items-center justify-between text-sm">
           <span className="font-semibold flex items-center gap-2">
-            <History className="size-4" /> Oxirgi to'lovlar
+            <History className="size-4" /> To'lovlar tarixi
           </span>
           <span className="text-muted-foreground">
             {payments?.results.length ?? 0} qator
@@ -251,7 +349,7 @@ export function SalaryPage() {
               {payments?.results.slice(0, 50).map((p) => (
                 <tr key={p.id} className="hover:bg-muted/30">
                   <td className="px-4 py-2 text-muted-foreground tabular-nums whitespace-nowrap">
-                    {p.occurred_at.slice(0, 10)}
+                    {fmtDate(p.occurred_at)}
                   </td>
                   <td className="px-4 py-2 font-medium">{p.user_display}</td>
                   <td className="px-4 py-2">
@@ -287,7 +385,7 @@ export function SalaryPage() {
                 <div className="min-w-0">
                   <div className="font-medium truncate">{p.user_display}</div>
                   <div className="text-xs text-muted-foreground">
-                    {p.occurred_at.slice(0, 10)} · {p.account_name}
+                    {fmtDate(p.occurred_at)} · {p.account_name}
                   </div>
                 </div>
                 <div className="text-right shrink-0">
@@ -348,11 +446,12 @@ function EmployeeCard({
   onHistory: () => void;
 }) {
   const remaining = parseFloat(employee.remaining);
-  const earned = parseFloat(employee.earned);
+  // Per-period figures (scoped to the selected date range) so the card is
+  // coherent with the page totals: hisoblangan − to'langan ≈ qoldiq.
+  const earned = parseFloat(employee.earned_period);
+  // Paid out within the period (salary + advance); bonus is extra, excluded.
   const paid =
-    parseFloat(employee.paid_salary) +
-    parseFloat(employee.paid_advance) +
-    parseFloat(employee.paid_bonus);
+    parseFloat(employee.paid_salary) + parseFloat(employee.paid_advance);
 
   return (
     <div className="rounded-xl border bg-card p-4 flex flex-col gap-3">
@@ -433,7 +532,7 @@ function EmployeeCard({
           <span className="font-medium text-foreground">
             {formatMoney(employee.last_payment.amount, employee.last_payment.currency)}
           </span>{" "}
-          ({employee.last_payment.occurred_at.slice(0, 10)})
+          ({fmtDate(employee.last_payment.occurred_at)})
         </div>
       )}
 
@@ -460,11 +559,13 @@ function StatCard({
   value,
   tone,
   icon,
+  subtitle,
 }: {
   label: string;
   value: string;
   tone?: "info" | "success" | "warning" | "danger";
   icon?: React.ReactNode;
+  subtitle?: string;
 }) {
   const toneCls =
     tone === "warning"
@@ -482,6 +583,9 @@ function StatCard({
         {icon} {label}
       </div>
       <div className={"mt-1 text-xl font-semibold tabular-nums " + toneCls}>{value}</div>
+      {subtitle && (
+        <div className="text-xs text-muted-foreground mt-0.5">{subtitle}</div>
+      )}
     </div>
   );
 }
@@ -511,9 +615,7 @@ function PaymentModal({
       : "",
   );
   const [accountId, setAccountId] = useState<number | "">("");
-  const [occurredAt, setOccurredAt] = useState(() =>
-    new Date().toISOString().slice(0, 16),
-  );
+  const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr());
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
   const [note, setNote] = useState("");
@@ -539,7 +641,7 @@ function PaymentModal({
         currency,
         amount,
         account: accountId,
-        occurred_at: new Date(occurredAt).toISOString(),
+        occurred_at: tashkentToISO(occurredAt),
         period_start: periodStart || null,
         period_end: periodEnd || null,
         note,
@@ -674,7 +776,15 @@ function PaymentModal({
         </div>
         {create.isError && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
-            Saqlashda xatolik.
+            {(() => {
+              const e = create.error as { response?: { data?: unknown }; message?: string };
+              const d = e?.response?.data;
+              if (d && typeof d === "object")
+                return Object.entries(d as Record<string, unknown>)
+                  .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`)
+                  .join(" · ");
+              return typeof d === "string" ? d : e?.message ?? "Saqlashda xatolik.";
+            })()}
           </div>
         )}
         <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
@@ -811,7 +921,15 @@ function RateModal({
         </div>
         {save.isError && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
-            Saqlashda xatolik.
+            {(() => {
+              const e = save.error as { response?: { data?: unknown }; message?: string };
+              const d = e?.response?.data;
+              if (d && typeof d === "object")
+                return Object.entries(d as Record<string, unknown>)
+                  .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`)
+                  .join(" · ");
+              return typeof d === "string" ? d : e?.message ?? "Saqlashda xatolik.";
+            })()}
           </div>
         )}
         <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">

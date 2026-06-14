@@ -1,9 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Users, Plus, Pencil, Archive as ArchiveIcon, Phone, Package } from "lucide-react";
+import { Users, Plus, Pencil, Archive as ArchiveIcon, Phone, Package, UsersRound, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import type { Paginated, Product } from "../lib/types";
+
+interface EmployeeGroup {
+  id: number;
+  name: string;
+  member_ids: number[];
+  members_display: { id: number; display_name: string }[];
+  note: string;
+}
 
 interface ApiUser {
   id: number;
@@ -40,6 +48,8 @@ export function UsersPage() {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ApiUser | null>(null);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<EmployeeGroup | null>(null);
 
   const qc = useQueryClient();
 
@@ -53,9 +63,23 @@ export function UsersPage() {
     },
   });
 
+  const { data: groups } = useQuery<EmployeeGroup[]>({
+    queryKey: ["employee-groups"],
+    queryFn: async () => {
+      const res = await api.get<{ results: EmployeeGroup[] } | EmployeeGroup[]>("/users/groups/");
+      const d = res.data;
+      return Array.isArray(d) ? d : d.results;
+    },
+  });
+
   const archive = useMutation({
     mutationFn: (id: number) => api.delete(`/users/${id}/`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+
+  const deleteGroup = useMutation({
+    mutationFn: (id: number) => api.delete(`/users/groups/${id}/`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["employee-groups"] }),
   });
 
   return (
@@ -240,8 +264,120 @@ export function UsersPage() {
         ))}
       </div>
 
+      {/* Employee Groups section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base sm:text-lg font-semibold flex items-center gap-2">
+            <UsersRound className="size-4 sm:size-5 text-bakery-500" /> Guruhlar
+          </h2>
+          <button
+            onClick={() => setCreatingGroup(true)}
+            className="inline-flex items-center gap-1 h-9 px-3 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm"
+          >
+            <Plus className="size-3.5" /> Yangi guruh
+          </button>
+        </div>
+
+        {/* Desktop groups table */}
+        <div className="rounded-xl border bg-card overflow-hidden hidden md:block">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-xs text-muted-foreground">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium">Guruh nomi</th>
+                <th className="text-left px-4 py-3 font-medium">A'zolar</th>
+                <th className="text-left px-4 py-3 font-medium">Izoh</th>
+                <th className="text-right px-4 py-3 font-medium w-32"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {(!groups || groups.length === 0) && (
+                <tr>
+                  <td colSpan={4} className="px-4 py-8 text-center text-muted-foreground">
+                    Guruh topilmadi
+                  </td>
+                </tr>
+              )}
+              {groups?.map((g) => (
+                <tr key={g.id} className="hover:bg-muted/30">
+                  <td className="px-4 py-3 font-medium">{g.name}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {g.members_display.length > 0
+                      ? g.members_display.map((m) => m.display_name).join(", ")
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">{g.note || "—"}</td>
+                  <td className="px-4 py-3 text-right space-x-2">
+                    <button
+                      onClick={() => setEditingGroup(g)}
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      <Pencil className="size-3.5" /> Tahrir
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm(`"${g.name}" guruhini o'chirasizmi?`)) {
+                          deleteGroup.mutate(g.id);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
+                    >
+                      <Trash2 className="size-3.5" /> O'chir
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile group cards */}
+        <div className="md:hidden space-y-2">
+          {(!groups || groups.length === 0) && (
+            <div className="rounded-xl border bg-card px-4 py-8 text-center text-muted-foreground text-sm">
+              Guruh topilmadi
+            </div>
+          )}
+          {groups?.map((g) => (
+            <div key={g.id} className="rounded-xl border bg-card p-3 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{g.name}</span>
+                <span className="text-xs text-muted-foreground">
+                  {g.members_display.length} a'zo
+                </span>
+              </div>
+              {g.members_display.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  {g.members_display.map((m) => m.display_name).join(", ")}
+                </div>
+              )}
+              {g.note && <div className="text-xs text-muted-foreground italic">{g.note}</div>}
+              <div className="flex items-center gap-2 pt-1 border-t">
+                <button
+                  onClick={() => setEditingGroup(g)}
+                  className="flex-1 inline-flex items-center justify-center gap-1 h-8 text-xs rounded-lg border hover:bg-muted"
+                >
+                  <Pencil className="size-3.5" /> Tahrir
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm(`"${g.name}" guruhini o'chirasizmi?`)) {
+                      deleteGroup.mutate(g.id);
+                    }
+                  }}
+                  className="flex-1 inline-flex items-center justify-center gap-1 h-8 text-xs rounded-lg border text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="size-3.5" /> O'chir
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {creating && <UserModal onClose={() => setCreating(false)} />}
       {editing && <UserModal user={editing} onClose={() => setEditing(null)} />}
+      {creatingGroup && <GroupModal onClose={() => setCreatingGroup(false)} />}
+      {editingGroup && <GroupModal group={editingGroup} onClose={() => setEditingGroup(null)} />}
     </div>
   );
 }
@@ -382,6 +518,117 @@ function UserModal({
           </button>
           <button
             disabled={!canSave || save.isPending}
+            onClick={() => save.mutate()}
+            className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
+          >
+            Saqlash
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GroupModal({
+  group,
+  onClose,
+}: {
+  group?: EmployeeGroup;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const isEdit = !!group;
+  const [name, setName] = useState(group?.name ?? "");
+  const [note, setNote] = useState(group?.note ?? "");
+  const [selectedMembers, setSelectedMembers] = useState<number[]>(group?.member_ids ?? []);
+
+  const { data: nonvoyList } = useQuery<Paginated<ApiUser>>({
+    queryKey: ["users", "nonvoy"],
+    queryFn: async () =>
+      (await api.get<Paginated<ApiUser>>("/users/", { params: { role: "nonvoy", archived: "false", page_size: "100" } })).data,
+  });
+
+  const toggleMember = (id: number) => {
+    setSelectedMembers((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = { name, note, member_ids: selectedMembers };
+      if (isEdit) return api.patch(`/users/groups/${group!.id}/`, payload);
+      return api.post("/users/groups/", payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["employee-groups"] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md bg-card rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
+      >
+        <h2 className="font-semibold text-lg mb-4">
+          {isEdit ? "Guruhni tahrirlash" : "Yangi guruh"}
+        </h2>
+        <div className="space-y-3">
+          <Field label="Guruh nomi">
+            <input
+              className="w-full h-10 px-3 rounded-lg border bg-background text-sm"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Masalan: 1-smena"
+            />
+          </Field>
+          <Field label="Izoh (ixtiyoriy)">
+            <input
+              className="w-full h-10 px-3 rounded-lg border bg-background text-sm"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </Field>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-2">
+              A'zolar (nonvoylar) — {selectedMembers.length} tanlangan
+            </label>
+            <div className="rounded-lg border bg-background divide-y max-h-48 overflow-y-auto">
+              {nonvoyList?.results.length === 0 && (
+                <div className="px-3 py-3 text-xs text-muted-foreground text-center">
+                  Nonvoy topilmadi
+                </div>
+              )}
+              {nonvoyList?.results.map((u) => (
+                <label
+                  key={u.id}
+                  className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/40"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedMembers.includes(u.id)}
+                    onChange={() => toggleMember(u.id)}
+                    className="rounded"
+                  />
+                  <span className="text-sm">{u.display_name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+        {save.isError && (
+          <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
+            Saqlashda xatolik.
+          </div>
+        )}
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <button onClick={onClose} className="h-10 px-4 rounded-lg border text-sm hover:bg-muted">
+            Bekor qilish
+          </button>
+          <button
+            disabled={!name.trim() || save.isPending}
             onClick={() => save.mutate()}
             className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
           >

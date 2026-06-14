@@ -43,8 +43,10 @@ class Product(TimestampedModel, ArchivableModel):
         max_digits=QTY_MAX_DIGITS, decimal_places=QTY_DECIMAL_PLACES, default=160
     )
 
+    sort_order = models.IntegerField(default=0, db_index=True)
+
     class Meta:
-        ordering = ["name"]
+        ordering = ["sort_order", "name"]
 
     def __str__(self) -> str:
         return self.name

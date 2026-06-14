@@ -1,23 +1,23 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ShoppingCart,
   Search,
   RotateCw,
   Plus,
-  Trash2,
   Clock,
+  Banknote,
 } from "lucide-react";
 import { api } from "../lib/api";
-import type { Order, OrderStatus, Paginated, Product, Shop } from "../lib/types";
-import { formatMoney } from "../lib/utils";
+import type { KassaAccount, Order, OrderStatus, Paginated, Product, Shop, ShopProductPrice } from "../lib/types";
+import { formatMoney, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { useAuth } from "../lib/auth";
 
-interface OrderLine {
-  key: string;
-  product: number | "";
-  unit_price: string;
-  quantity: string;
+interface ProductLine {
+  price: string;
+  qty: string;
+  delivered: string;
 }
 
 const STATUS_CHOICES: { value: "" | OrderStatus; label: string }[] = [
@@ -54,9 +54,13 @@ function deliveryUrgency(iso: string | null): "overdue" | "soon" | "later" | "no
 }
 
 export function OrdersPage() {
+  const role = useAuth((s) => s.user?.role);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [search, setSearch] = useState("");
-  const [status, setStatus] = useState<"" | OrderStatus>("");
+  const [status, setStatus] = useState<"" | OrderStatus>(
+    (searchParams.get("status") as OrderStatus) || ""
+  );
   const [creating, setCreating] = useState(false);
   const qc = useQueryClient();
 
@@ -86,12 +90,14 @@ export function OrdersPage() {
             {data?.count ?? 0} ta buyurtma
           </p>
         </div>
-        <button
-          onClick={() => setCreating(true)}
-          className="inline-flex items-center justify-center gap-1 h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm w-full sm:w-auto"
-        >
-          <Plus className="size-4" /> Yangi buyurtma
-        </button>
+        {role !== "driver" && (
+          <button
+            onClick={() => setCreating(true)}
+            className="inline-flex items-center justify-center gap-1 h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm w-full sm:w-auto"
+          >
+            <Plus className="size-4" /> Yangi buyurtma
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
@@ -129,7 +135,7 @@ export function OrdersPage() {
               <th className="text-left px-4 py-3 font-medium">Holati</th>
               <th className="text-right px-4 py-3 font-medium">Summa</th>
               <th className="text-right px-4 py-3 font-medium">Yetkazildi</th>
-              <th className="text-right px-4 py-3 font-medium"></th>
+              {role !== "driver" && <th className="text-right px-4 py-3 font-medium"></th>}
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -196,19 +202,21 @@ export function OrdersPage() {
                   <td className="px-4 py-3 text-right tabular-nums">
                     {formatMoney(o.delivered_amount, o.currency)}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      disabled={repeat.isPending}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        repeat.mutate(o.id);
-                      }}
-                      title="Takrorlash (feature #3)"
-                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-bakery-600"
-                    >
-                      <RotateCw className="size-3" /> Takrorlash
-                    </button>
-                  </td>
+                  {role !== "driver" && (
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        disabled={repeat.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          repeat.mutate(o.id);
+                        }}
+                        title="Takrorlash (feature #3)"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-bakery-600"
+                      >
+                        <RotateCw className="size-3" /> Takrorlash
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -275,18 +283,20 @@ export function OrdersPage() {
                   </div>
                 </div>
               </div>
-              <div className="mt-3 pt-3 border-t flex justify-end">
-                <button
-                  disabled={repeat.isPending}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    repeat.mutate(o.id);
-                  }}
-                  className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-bakery-600"
-                >
-                  <RotateCw className="size-3" /> Takrorlash
-                </button>
-              </div>
+              {role !== "driver" && (
+                <div className="mt-3 pt-3 border-t flex justify-end">
+                  <button
+                    disabled={repeat.isPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      repeat.mutate(o.id);
+                    }}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-bakery-600"
+                  >
+                    <RotateCw className="size-3" /> Takrorlash
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
@@ -297,19 +307,43 @@ export function OrdersPage() {
   );
 }
 
-function NewOrderModal({ onClose }: { onClose: () => void }) {
+function getApiError(err: unknown): string {
+  if (!err) return "";
+  const e = err as { response?: { data?: unknown }; message?: string };
+  if (e?.response?.data) {
+    const d = e.response.data;
+    if (typeof d === "string") return d;
+    if (typeof d === "object") {
+      return Object.entries(d as Record<string, unknown>)
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`)
+        .join(" · ");
+    }
+  }
+  return e?.message ?? "Noma'lum xatolik";
+}
+
+function NewOrderModal({
+  onClose,
+}: {
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
   const [shop, setShop] = useState<number | "">("");
-  // Feature #3/UX: default to tomorrow so new orders are for next delivery day.
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const [orderDate, setOrderDate] = useState(tomorrow.toISOString().slice(0, 10));
   const [deliveryTime, setDeliveryTime] = useState("");
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
+  const [orderStatus, setOrderStatus] = useState<OrderStatus>("pending");
   const [note, setNote] = useState("");
-  const [lines, setLines] = useState<OrderLine[]>([
-    { key: crypto.randomUUID(), product: "", unit_price: "", quantity: "1" },
-  ]);
+  // Map<productId, {price, qty, delivered}>
+  const [lineMap, setLineMap] = useState<Record<number, ProductLine>>({});
+
+  // Inline payment ("Pul oldingizmi?") for delivered/partial orders.
+  const [payAmount, setPayAmount] = useState("");
+  const [payAccountId, setPayAccountId] = useState<number | "">("");
+
+  const isDelivering = orderStatus === "delivered" || orderStatus === "partial";
 
   const { data: shops } = useQuery<Paginated<Shop>>({
     queryKey: ["shops", "for-order"],
@@ -317,61 +351,133 @@ function NewOrderModal({ onClose }: { onClose: () => void }) {
       (await api.get<Paginated<Shop>>("/shops/?archived=false")).data,
   });
 
-  const { data: products } = useQuery<Paginated<Product>>({
-    queryKey: ["products", "for-order"],
-    queryFn: async () => (await api.get<Paginated<Product>>("/products/")).data,
+  const { data: accounts } = useQuery<{ results: KassaAccount[] }>({
+    queryKey: ["kassa", "accounts"],
+    queryFn: async () =>
+      (await api.get<{ results: KassaAccount[] }>("/finance/accounts/")).data,
+    enabled: isDelivering,
   });
 
-  const validLines = lines.filter(
-    (l) => l.product && parseFloat(l.unit_price) > 0 && parseInt(l.quantity) > 0,
-  );
+  // Auto-select first kassa account once accounts load.
+  useEffect(() => {
+    const accs = accounts?.results ?? [];
+    if (accs.length > 0 && payAccountId === "") setPayAccountId(accs[0].id);
+  }, [accounts, payAccountId]);
 
-  const total = validLines.reduce(
-    (sum, l) => sum + parseFloat(l.unit_price) * parseInt(l.quantity),
-    0,
-  );
+  const { data: products } = useQuery<Paginated<Product>>({
+    queryKey: ["products", "for-order"],
+    queryFn: async () =>
+      (await api.get<Paginated<Product>>("/products/?archived=false")).data,
+  });
+
+  // Fetch per-shop prices when a shop is selected.
+  const { data: shopPrices } = useQuery<ShopProductPrice[]>({
+    queryKey: ["shop-prices", shop, currency],
+    queryFn: async () =>
+      (await api.get<ShopProductPrice[]>(`/shops/${shop}/prices/`)).data,
+    enabled: !!shop,
+  });
+
+  // Reset prices when shop, products or currency changes.
+  // Priority: shop-specific price for matching currency → product default → ""
+  useEffect(() => {
+    if (!products?.results) return;
+    setLineMap((prev) => {
+      const next: Record<number, ProductLine> = {};
+      const priceMap: Record<number, string> = {};
+      if (shopPrices) {
+        for (const sp of shopPrices) {
+          if (sp.currency === currency) {
+            priceMap[sp.product] = sp.price;
+          }
+        }
+      }
+      for (const p of products.results) {
+        const shopPrice = priceMap[p.id];
+        const defaultPrice = currency === "UZS" ? p.default_price_uzs : p.default_price_usd;
+        next[p.id] = {
+          price: shopPrice ?? defaultPrice ?? "",
+          qty: prev[p.id]?.qty ?? "",
+          delivered: prev[p.id]?.delivered ?? "",
+        };
+      }
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products?.results, currency, shopPrices]);
+
+  const updateLine = (id: number, patch: Partial<ProductLine>) =>
+    setLineMap((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+
+  // Lines where qty > 0. For a "partial" order we send the per-item delivered
+  // amount (defaulting to the full qty when left blank); "delivered" lets the
+  // backend fill in the full quantity automatically.
+  const validLines = (products?.results ?? []).flatMap((p) => {
+    const line = lineMap[p.id];
+    const qty = parseInt(line?.qty ?? "");
+    if (!qty || qty <= 0) return [];
+    const base = { product: p.id, unit_price: line.price || "0", quantity: qty };
+    if (orderStatus === "partial") {
+      const deliveredRaw = line.delivered;
+      const delivered = deliveredRaw === "" ? qty : Math.min(parseInt(deliveredRaw) || 0, qty);
+      return [{ ...base, delivered_quantity: delivered }];
+    }
+    return [base];
+  });
+
+  const total = (products?.results ?? []).reduce((sum, p) => {
+    const line = lineMap[p.id];
+    const qty = parseInt(line?.qty ?? "") || 0;
+    const price = parseFloat(line?.price ?? "") || 0;
+    return sum + price * qty;
+  }, 0);
 
   const create = useMutation({
-    mutationFn: () =>
-      api.post("/orders/", {
+    mutationFn: async () => {
+      const res = await api.post<{ id: number }>("/orders/", {
         shop: Number(shop),
         order_date: orderDate,
-        // Combine order date + entered HH:MM as local time → ISO datetime.
         delivery_time: deliveryTime
           ? new Date(`${orderDate}T${deliveryTime}`).toISOString()
           : null,
         currency,
+        status: orderStatus,
         note,
-        items: validLines.map((l) => ({
-          product: Number(l.product),
-          unit_price: l.unit_price,
-          quantity: parseInt(l.quantity),
-        })),
-      }),
+        items: validLines,
+      });
+      // Record the received cash inline (same as the old payment popup) when a
+      // delivered/partial order was paid for at handover.
+      const amt = parseFloat(payAmount);
+      if (isDelivering && payAccountId !== "" && amt > 0) {
+        await api.post("/finance/payments/", {
+          shop: Number(shop),
+          order: res.data.id,
+          account: payAccountId,
+          currency,
+          amount: payAmount,
+          discount: "0",
+          note: `Buyurtma #${res.data.id} to'lovi`,
+          received_at: tashkentToISO(`${orderDate}T${nowTashkentStr().slice(11, 16)}`),
+          payment_type: "collection",
+        });
+      }
+      return res;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["kassa"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
+      qc.invalidateQueries({ queryKey: ["shops"] });
       onClose();
     },
   });
-
-  const addLine = () =>
-    setLines((ls) => [
-      ...ls,
-      { key: crypto.randomUUID(), product: "", unit_price: "", quantity: "1" },
-    ]);
-
-  const removeLine = (key: string) =>
-    setLines((ls) => (ls.length === 1 ? ls : ls.filter((l) => l.key !== key)));
-
-  const updateLine = (key: string, patch: Partial<OrderLine>) =>
-    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   const canSave = shop !== "" && validLines.length > 0 && !create.isPending;
 
   return (
     <div
       className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50"
-      onClick={onClose}
+      onClick={() => onClose()}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -405,7 +511,7 @@ function NewOrderModal({ onClose }: { onClose: () => void }) {
               />
             </Field>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="Yetkazish vaqti (ixtiyoriy)">
               <input
                 type="time"
@@ -424,108 +530,180 @@ function NewOrderModal({ onClose }: { onClose: () => void }) {
                 <option value="USD">USD</option>
               </select>
             </Field>
-          </div>
-          <div className="rounded-xl border bg-muted/30 p-3 sm:p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-sm">Mahsulotlar</h3>
-              <button
-                type="button"
-                onClick={addLine}
-                className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border text-xs hover:bg-card"
+            <Field label="Holati">
+              <select
+                value={orderStatus}
+                onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}
+                className="w-full h-10 px-3 rounded-lg border bg-background text-sm"
               >
-                <Plus className="size-3.5" /> Qo'shish
-              </button>
-            </div>
-            <div className="space-y-2">
-              {lines.map((l) => {
-                const prod = products?.results.find((p) => p.id === l.product);
-                return (
-                  <div
-                    key={l.key}
-                    className="flex flex-col sm:flex-row gap-2 sm:items-center p-2 sm:p-0 rounded-lg bg-card sm:bg-transparent"
-                  >
-                    <select
-                      value={l.product}
-                      onChange={(e) => {
-                        const pid = e.target.value
-                          ? Number(e.target.value)
-                          : "";
-                        const picked = products?.results.find(
-                          (p) => p.id === pid,
-                        );
-                        updateLine(l.key, {
-                          product: pid,
-                          unit_price:
-                            picked && !l.unit_price
-                              ? (currency === "UZS"
-                                  ? picked.default_price_uzs
-                                  : picked.default_price_usd) || ""
-                              : l.unit_price,
-                        });
-                      }}
-                      className="flex-1 h-10 rounded-lg border bg-background px-3 text-sm min-w-0"
-                    >
-                      <option value="">Mahsulot tanlang…</option>
-                      {products?.results.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex gap-2 items-center">
-                      <input
-                        value={l.unit_price}
-                        onChange={(e) =>
-                          updateLine(l.key, { unit_price: e.target.value })
-                        }
-                        placeholder="Narx"
-                        inputMode="decimal"
-                        className="flex-1 sm:w-32 h-10 rounded-lg border bg-background px-3 text-sm tabular-nums text-right"
-                      />
-                      <input
-                        value={l.quantity}
-                        onChange={(e) =>
-                          updateLine(l.key, { quantity: e.target.value })
-                        }
-                        placeholder="Soni"
-                        inputMode="numeric"
-                        className="w-20 h-10 rounded-lg border bg-background px-3 text-sm tabular-nums text-right"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeLine(l.key)}
-                        disabled={lines.length === 1}
-                        className="size-10 shrink-0 rounded-lg border grid place-items-center text-muted-foreground hover:text-destructive disabled:opacity-30"
-                        aria-label="O'chirish"
-                      >
-                        <Trash2 className="size-4" />
-                      </button>
-                    </div>
-                    <div className="w-full sm:w-28 text-right text-xs text-muted-foreground tabular-nums">
-                      {prod &&
-                      parseFloat(l.unit_price) > 0 &&
-                      parseInt(l.quantity) > 0
-                        ? formatMoney(
-                            (
-                              parseFloat(l.unit_price) * parseInt(l.quantity)
-                            ).toString(),
-                            currency,
-                          )
-                        : "—"}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {validLines.length > 0 && (
-              <div className="mt-3 flex justify-between text-sm font-semibold">
-                <span>Jami:</span>
-                <span className="tabular-nums">
-                  {formatMoney(total.toString(), currency)}
-                </span>
-              </div>
-            )}
+                <option value="pending">Kutilmoqda</option>
+                <option value="partial">Qisman yetkazildi</option>
+                <option value="delivered">Yetkazildi</option>
+                <option value="cancelled">Bekor qilindi</option>
+              </select>
+            </Field>
           </div>
+
+          {/* Product table — all products pre-listed */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-semibold text-sm">Mahsulotlar</h3>
+              {validLines.length > 0 && (
+                <span className="text-xs text-bakery-600 font-medium">
+                  {validLines.length} ta tanlangan
+                </span>
+              )}
+            </div>
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Mahsulot</th>
+                    <th className="text-right px-3 py-2 font-medium w-24">Soni</th>
+                    {orderStatus === "partial" && (
+                      <th className="text-right px-3 py-2 font-medium w-24">Yetkazildi</th>
+                    )}
+                    <th className="text-right px-3 py-2 font-medium w-32">Narx</th>
+                    <th className="text-right px-3 py-2 font-medium w-28 hidden sm:table-cell">Jami</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {!products && (
+                    <tr>
+                      <td colSpan={orderStatus === "partial" ? 5 : 4} className="px-3 py-4 text-center text-muted-foreground text-xs">
+                        Yuklanmoqda…
+                      </td>
+                    </tr>
+                  )}
+                  {products?.results.map((p) => {
+                    const line = lineMap[p.id] ?? { price: "", qty: "" };
+                    const qty = parseInt(line.qty) || 0;
+                    const price = parseFloat(line.price) || 0;
+                    const lineTotal = qty * price;
+                    const active = qty > 0;
+                    return (
+                      <tr
+                        key={p.id}
+                        className={active ? "bg-bakery-500/5" : "hover:bg-muted/20"}
+                      >
+                        <td className="px-3 py-1.5 font-medium">{p.name}</td>
+                        <td className="px-3 py-1.5">
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={line.qty}
+                            onChange={(e) =>
+                              updateLine(p.id, { qty: e.target.value.replace(/[^0-9]/g, "") })
+                            }
+                            onKeyDown={(e) => {
+                              if (["e", "E", "+", "-", "."].includes(e.key)) e.preventDefault();
+                            }}
+                            placeholder="0"
+                            className={`w-full h-8 rounded-md border px-2 text-sm tabular-nums text-right focus:ring-1 outline-none ${
+                              active
+                                ? "border-bakery-400 bg-bakery-500/5 focus:ring-bakery-400"
+                                : "bg-background focus:ring-bakery-400"
+                            }`}
+                          />
+                        </td>
+                        {orderStatus === "partial" && (
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={line.delivered}
+                              onChange={(e) =>
+                                updateLine(p.id, { delivered: e.target.value.replace(/[^0-9]/g, "") })
+                              }
+                              onKeyDown={(e) => {
+                                if (["e", "E", "+", "-", "."].includes(e.key)) e.preventDefault();
+                              }}
+                              placeholder={active ? String(qty) : "0"}
+                              disabled={!active}
+                              className="w-full h-8 rounded-md border bg-background px-2 text-sm tabular-nums text-right focus:ring-1 focus:ring-emerald-400 outline-none disabled:opacity-40"
+                            />
+                          </td>
+                        )}
+                        <td className="px-3 py-1.5">
+                          <input
+                            value={line.price}
+                            onChange={(e) =>
+                              updateLine(p.id, { price: e.target.value })
+                            }
+                            inputMode="decimal"
+                            placeholder="0"
+                            className="w-full h-8 rounded-md border bg-background px-2 text-sm tabular-nums text-right focus:ring-1 focus:ring-bakery-400 outline-none"
+                          />
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground hidden sm:table-cell">
+                          {active
+                            ? formatMoney(lineTotal.toString(), currency)
+                            : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {validLines.length > 0 && (
+                  <tfoot>
+                    <tr className="border-t bg-muted/30 font-semibold">
+                      <td colSpan={orderStatus === "partial" ? 4 : 3} className="px-3 py-2 text-sm">
+                        Jami ({validLines.length} mahsulot):
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums hidden sm:table-cell">
+                        {formatMoney(total.toString(), currency)}
+                      </td>
+                    </tr>
+                    <tr className="sm:hidden border-t bg-muted/30">
+                      <td colSpan={orderStatus === "partial" ? 4 : 3} className="px-3 py-1.5 text-right font-semibold tabular-nums">
+                        {formatMoney(total.toString(), currency)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+
+          {isDelivering && (
+            <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                <Banknote className="size-4" />
+                Pul oldingizmi? (ixtiyoriy)
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={`Olingan summa (${currency})`}>
+                  <input
+                    className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="0"
+                  />
+                </Field>
+                <Field label="Kassa">
+                  <select
+                    value={payAccountId}
+                    onChange={(e) => setPayAccountId(e.target.value ? Number(e.target.value) : "")}
+                    className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+                  >
+                    <option value="">Tanlang…</option>
+                    {(accounts?.results ?? []).map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {orderStatus === "partial"
+                  ? "Yetkazilgan miqdorni har bir mahsulot uchun yuqorida kiriting. Bo'sh qolsa, to'liq yetkazilgan deb hisoblanadi."
+                  : "Barcha mahsulotlar to'liq yetkazilgan deb belgilanadi."}
+              </p>
+            </div>
+          )}
+
           <Field label="Izoh">
             <input
               className="w-full h-10 px-3 rounded-lg border bg-background text-sm"
@@ -537,12 +715,12 @@ function NewOrderModal({ onClose }: { onClose: () => void }) {
         </div>
         {create.isError && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
-            Saqlashda xatolik.
+            {getApiError(create.error)}
           </div>
         )}
         <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
           <button
-            onClick={onClose}
+            onClick={() => onClose()}
             className="h-10 px-4 rounded-lg border text-sm hover:bg-muted"
           >
             Bekor qilish
@@ -552,7 +730,7 @@ function NewOrderModal({ onClose }: { onClose: () => void }) {
             onClick={() => create.mutate()}
             className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {create.isPending ? "Saqlanmoqda…" : "Saqlash"}
+            {create.isPending ? "Saqlanmoqda…" : `Saqlash${validLines.length > 0 ? ` (${validLines.length})` : ""}`}
           </button>
         </div>
       </div>

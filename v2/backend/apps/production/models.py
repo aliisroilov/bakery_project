@@ -5,6 +5,8 @@ Feature #13: dashboard needs today/month production counts → use Production.
 Feature #14: per-product production salary → Production tracks nonvoy + product.
 Feature #21: per-nonvoy salary history (per-day qop count) → Production aggregation.
 """
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -14,26 +16,38 @@ from apps.core.models import TimestampedModel
 
 class Production(TimestampedModel):
     """
-    One production run — a nonvoy produced N units of a product on a given date.
+    One production run — a nonvoy (or group) produced N qop of a product.
 
-    Unlike v1 (which used `meshok` globally), v2 links each run to a specific
-    nonvoy staff so we can pay per-nonvoy per-product rates (feature #14).
+    - nonvoy OR group must be set (one is required, not both).
+    - unit_count is entered MANUALLY — actual yield varies (e.g. 160-165 per qop).
+    - Stock is bumped by unit_count when the record is saved.
     """
 
     product = models.ForeignKey(
         "products.Product", on_delete=models.PROTECT, related_name="productions"
     )
+    # Individual baker — nullable when a group is used.
     nonvoy = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
         related_name="productions",
         limit_choices_to={"role": "nonvoy"},
+        null=True,
+        blank=True,
     )
-    # Quantity in "meshok" (batch). One batch = product.meshok_size units.
+    # Group of bakers — nullable when a single nonvoy is used.
+    group = models.ForeignKey(
+        "users.EmployeeGroup",
+        on_delete=models.PROTECT,
+        related_name="productions",
+        null=True,
+        blank=True,
+    )
+    # Quantity in "meshok" / qop (batch count).
     meshok_count = models.DecimalField(
         max_digits=QTY_MAX_DIGITS, decimal_places=QTY_DECIMAL_PLACES
     )
-    # Total units produced (meshok_count × product.meshok_size), cached for queries.
+    # Total units actually produced — entered MANUALLY (not auto-calculated from meshok_size).
     unit_count = models.DecimalField(
         max_digits=QTY_MAX_DIGITS, decimal_places=QTY_DECIMAL_PLACES, default=0
     )
@@ -47,8 +61,16 @@ class Production(TimestampedModel):
             models.Index(fields=["nonvoy", "-occurred_at"]),
         ]
 
+    @property
+    def actor_name(self) -> str:
+        if self.nonvoy_id:
+            return self.nonvoy.display_name
+        if self.group_id:
+            return self.group.name
+        return "—"
+
     def __str__(self) -> str:
-        return f"{self.product.name} · {self.meshok_count} meshok · {self.nonvoy.display_name}"
+        return f"{self.product.name} · {self.meshok_count} qop · {self.actor_name}"
 
 
 class ProductionIngredientUsage(models.Model):
@@ -115,6 +137,7 @@ class InventoryRevisionReport(TimestampedModel):
         max_digits=QTY_MAX_DIGITS, decimal_places=QTY_DECIMAL_PLACES
     )
     note = models.TextField(blank=True)
+    batch_id = models.UUIDField(null=True, blank=True, db_index=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

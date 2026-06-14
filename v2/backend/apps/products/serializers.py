@@ -14,6 +14,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "production_salary_per_unit_uzs",
             "cost_price_uzs", "cost_price_updated_at",
             "meshok_size",
+            "sort_order",
             "stock_quantity",
             "is_archived", "created_at",
         ]

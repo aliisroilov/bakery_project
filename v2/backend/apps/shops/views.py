@@ -29,6 +29,16 @@ class RegionViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_archived=False)
         return qs
 
+    def perform_destroy(self, instance):
+        instance.archive()
+
+    @action(detail=True, methods=["post"])
+    def unarchive(self, request, pk=None):
+        """Restore an archived region."""
+        region = self.get_object()
+        region.unarchive()
+        return Response(RegionSerializer(region).data)
+
     @action(detail=False, methods=["get"], url_path="today_stats")
     def today_stats(self, request):
         """Per-region order counts for a given date (default = today).
@@ -108,6 +118,16 @@ class ShopViewSet(viewsets.ModelViewSet):
         if self.action in ("retrieve",):
             return ShopDetailSerializer
         return ShopListSerializer
+
+    def perform_destroy(self, instance):
+        instance.archive()
+
+    @action(detail=True, methods=["post"])
+    def unarchive(self, request, pk=None):
+        """Restore an archived shop."""
+        shop = self.get_object()
+        shop.unarchive()
+        return Response(ShopListSerializer(shop).data)
 
     @action(detail=True, methods=["get", "post"])
     def prices(self, request, pk=None):

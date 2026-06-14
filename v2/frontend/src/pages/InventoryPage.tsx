@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Plus, Settings2, Wheat } from "lucide-react";
+import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Plus, Settings2, Wheat } from "lucide-react";
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated } from "../lib/types";
-import { formatMoney } from "../lib/utils";
+import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
 
 interface Ingredient {
   id: number;
@@ -31,14 +31,56 @@ interface Purchase {
   note: string;
 }
 
+interface InventoryRevision {
+  id: number;
+  ingredient: number;
+  ingredient_name: string;
+  ingredient_unit: string;
+  old_quantity: string;
+  new_quantity: string;
+  diff: string;
+  note: string;
+  batch_id: string | null;
+  user_name: string;
+  created_at: string;
+}
+
 export function InventoryPage() {
   const [purchaseOpen, setPurchaseOpen] = useState(false);
+  const [reviziyaOpen, setReviziyaOpen] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [adjustIng, setAdjustIng] = useState<Ingredient | null>(null);
+  const [showArchivedIng, setShowArchivedIng] = useState(false);
+
+  const qc = useQueryClient();
 
   const { data: ingredients } = useQuery<Paginated<Ingredient>>({
-    queryKey: ["inventory", "ingredients"],
+    queryKey: ["inventory", "ingredients", showArchivedIng],
     queryFn: async () =>
-      (await api.get<Paginated<Ingredient>>("/inventory/ingredients/?archived=false")).data,
+      (
+        await api.get<Paginated<Ingredient>>(
+          `/inventory/ingredients/?archived=${showArchivedIng}`,
+        )
+      ).data,
+  });
+
+  const { data: revisions } = useQuery<Paginated<InventoryRevision>>({
+    queryKey: ["inventory", "revisions"],
+    queryFn: async () =>
+      (await api.get<Paginated<InventoryRevision>>("/inventory/revisions/?page_size=200&ordering=-created_at")).data,
+    enabled: showHistory,
+  });
+
+  const archiveIng = useMutation({
+    mutationFn: (id: number) =>
+      api.patch(`/inventory/ingredients/${id}/`, { is_archived: true }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "ingredients"] }),
+  });
+
+  const unarchiveIng = useMutation({
+    mutationFn: (id: number) =>
+      api.patch(`/inventory/ingredients/${id}/`, { is_archived: false }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["inventory", "ingredients"] }),
   });
 
   const { data: purchases } = useQuery<Paginated<Purchase>>({
@@ -54,17 +96,42 @@ export function InventoryPage() {
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">Xomashyo</h1>
           <p className="text-muted-foreground text-sm">Ingredientlar va xaridlar</p>
         </div>
-        <button
-          onClick={() => setPurchaseOpen(true)}
-          className="inline-flex items-center justify-center gap-1 h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm w-full sm:w-auto"
-        >
-          <Plus className="size-4" /> Yangi xarid
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            className={`inline-flex items-center justify-center gap-1 h-10 px-4 rounded-lg border text-sm w-full sm:w-auto ${showHistory ? "bg-muted" : "hover:bg-muted"}`}
+          >
+            <History className="size-4" /> Reviziya tarixi
+          </button>
+          <button
+            onClick={() => setReviziyaOpen(true)}
+            className="inline-flex items-center justify-center gap-1 h-10 px-4 rounded-lg border border-amber-400 text-amber-700 hover:bg-amber-50 text-sm w-full sm:w-auto"
+          >
+            <ClipboardList className="size-4" /> Reviziya
+          </button>
+          <button
+            onClick={() => setPurchaseOpen(true)}
+            className="inline-flex items-center justify-center gap-1 h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm w-full sm:w-auto"
+          >
+            <Plus className="size-4" /> Yangi xarid
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border bg-card overflow-hidden">
-        <div className="px-4 sm:px-5 py-4 border-b">
+        <div className="px-4 sm:px-5 py-4 border-b flex items-center justify-between gap-2">
           <h2 className="font-semibold">Ingredientlar</h2>
+          <button
+            onClick={() => setShowArchivedIng((v) => !v)}
+            className={`inline-flex items-center gap-1 h-8 px-3 rounded-lg border text-xs ${
+              showArchivedIng
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            <Archive className="size-3.5" />
+            {showArchivedIng ? "Arxivlangan" : "Arxiv"}
+          </button>
         </div>
 
         {/* Desktop table */}
@@ -75,7 +142,7 @@ export function InventoryPage() {
               <th className="text-right px-4 py-3 font-medium">Zaxira</th>
               <th className="text-right px-4 py-3 font-medium">Minimum</th>
               <th className="text-right px-4 py-3 font-medium">O'rta narx</th>
-              <th className="text-right px-4 py-3 font-medium w-20"></th>
+              <th className="text-right px-4 py-3 font-medium w-36"></th>
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -102,14 +169,34 @@ export function InventoryPage() {
                     ? formatMoney(i.avg_cost_uzs, "UZS")
                     : "—"}
                 </td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => setAdjustIng(i)}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    title="Zaxirani tuzatish"
-                  >
-                    <Settings2 className="size-3.5" /> Tuzatish
-                  </button>
+                <td className="px-4 py-3 text-right space-x-2">
+                  {!i.is_archived && (
+                    <button
+                      onClick={() => setAdjustIng(i)}
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      title="Zaxirani tuzatish"
+                    >
+                      <Settings2 className="size-3.5" /> Tuzatish
+                    </button>
+                  )}
+                  {i.is_archived ? (
+                    <button
+                      onClick={() => unarchiveIng.mutate(i.id)}
+                      className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline"
+                    >
+                      <ArchiveRestore className="size-3.5" /> Qaytarish
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        if (confirm(`"${i.name}" arxivga o'tkazilsinmi?`))
+                          archiveIng.mutate(i.id);
+                      }}
+                      className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
+                    >
+                      <Archive className="size-3.5" /> Arxiv
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -148,12 +235,34 @@ export function InventoryPage() {
                   )}
                 </div>
               </div>
-              <button
-                onClick={() => setAdjustIng(i)}
-                className="shrink-0 inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-muted-foreground hover:text-foreground"
-              >
-                <Settings2 className="size-3.5" />
-              </button>
+              <div className="shrink-0 flex items-center gap-1">
+                {!i.is_archived && (
+                  <button
+                    onClick={() => setAdjustIng(i)}
+                    className="inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <Settings2 className="size-3.5" />
+                  </button>
+                )}
+                {i.is_archived ? (
+                  <button
+                    onClick={() => unarchiveIng.mutate(i.id)}
+                    className="inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-emerald-600"
+                  >
+                    <ArchiveRestore className="size-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      if (confirm(`"${i.name}" arxivga o'tkazilsinmi?`))
+                        archiveIng.mutate(i.id);
+                    }}
+                    className="inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-destructive"
+                  >
+                    <Archive className="size-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -179,7 +288,7 @@ export function InventoryPage() {
             {purchases?.results.slice(0, 25).map((p) => (
               <tr key={p.id}>
                 <td className="px-4 py-3 text-muted-foreground tabular-nums">
-                  {p.occurred_at.slice(0, 10)}
+                  {fmtDate(p.occurred_at)}
                 </td>
                 <td className="px-4 py-3">{p.ingredient_name}</td>
                 <td className="px-4 py-3 text-right tabular-nums">
@@ -206,7 +315,7 @@ export function InventoryPage() {
               </div>
               <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>
-                  {p.occurred_at.slice(0, 10)} · {p.account_name}
+                  {fmtDate(p.occurred_at)} · {p.account_name}
                 </span>
                 <span className="tabular-nums">
                   {parseFloat(p.quantity).toFixed(2)}
@@ -217,10 +326,99 @@ export function InventoryPage() {
         </div>
       </div>
 
+      {showHistory && (
+        <div className="rounded-xl border bg-card overflow-hidden">
+          <div className="px-4 sm:px-5 py-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2">
+              <History className="size-4 text-amber-600" /> Reviziya tarixi
+            </h2>
+            <p className="text-xs text-muted-foreground">Barcha inventarizatsiya o'zgarishlari</p>
+          </div>
+
+          {/* Desktop */}
+          <table className="w-full text-sm hidden md:table">
+            <thead className="bg-muted/50 text-xs text-muted-foreground">
+              <tr>
+                <th className="text-left px-4 py-3 font-medium">Sana</th>
+                <th className="text-left px-4 py-3 font-medium">Ingredient</th>
+                <th className="text-right px-4 py-3 font-medium">Eski</th>
+                <th className="text-right px-4 py-3 font-medium">Yangi</th>
+                <th className="text-right px-4 py-3 font-medium">Farq</th>
+                <th className="text-left px-4 py-3 font-medium">Sabab</th>
+                <th className="text-left px-4 py-3 font-medium">Kim</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {(revisions?.results.length ?? 0) === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">
+                    Reviziya tarixi yo'q
+                  </td>
+                </tr>
+              )}
+              {revisions?.results.map((r) => {
+                const diff = parseFloat(r.diff);
+                return (
+                  <tr key={r.id}>
+                    <td className="px-4 py-3 text-muted-foreground tabular-nums">{fmtDateTime(r.created_at)}</td>
+                    <td className="px-4 py-3 font-medium">{r.ingredient_name}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
+                      {parseFloat(r.old_quantity).toFixed(2)} {r.ingredient_unit}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums font-medium">
+                      {parseFloat(r.new_quantity).toFixed(2)} {r.ingredient_unit}
+                    </td>
+                    <td className={`px-4 py-3 text-right tabular-nums font-semibold ${diff > 0 ? "text-emerald-700" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                      {diff > 0 ? "+" : ""}{diff.toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{r.note || "—"}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{r.user_name || "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Mobile */}
+          <div className="md:hidden divide-y">
+            {(revisions?.results.length ?? 0) === 0 && (
+              <div className="px-4 py-10 text-center text-muted-foreground text-sm">Reviziya tarixi yo'q</div>
+            )}
+            {revisions?.results.map((r) => {
+              const diff = parseFloat(r.diff);
+              return (
+                <div key={r.id} className="p-3 space-y-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-medium">{r.ingredient_name}</div>
+                    <div className={`font-semibold tabular-nums text-sm ${diff > 0 ? "text-emerald-700" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                      {diff > 0 ? "+" : ""}{diff.toFixed(2)} {r.ingredient_unit}
+                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground flex justify-between gap-2">
+                    <span>{fmtDateTime(r.created_at)} · {r.user_name}</span>
+                    <span>{parseFloat(r.old_quantity).toFixed(2)} → {parseFloat(r.new_quantity).toFixed(2)}</span>
+                  </div>
+                  {r.note && <div className="text-xs text-muted-foreground italic">{r.note}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {purchaseOpen && (
         <PurchaseModal
           ingredients={ingredients?.results ?? []}
           onClose={() => setPurchaseOpen(false)}
+        />
+      )}
+      {reviziyaOpen && (
+        <ReviziyaModal
+          ingredients={(ingredients?.results ?? []).filter((i) => !i.is_archived)}
+          onClose={() => {
+            setReviziyaOpen(false);
+            qc.invalidateQueries({ queryKey: ["inventory"] });
+          }}
         />
       )}
       {adjustIng && (
@@ -243,9 +441,7 @@ function PurchaseModal({
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
-  const [occurredAt, setOccurredAt] = useState(
-    () => new Date().toISOString().slice(0, 16),
-  );
+  const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr().slice(0, 10));
   const [note, setNote] = useState("");
 
   const qtyNum = parseFloat(quantity) || 0;
@@ -269,7 +465,7 @@ function PurchaseModal({
         currency,
         quantity,
         total_price: totalPrice,
-        occurred_at: new Date(occurredAt).toISOString(),
+        occurred_at: tashkentToISO(occurredAt + "T00:00"),
         note,
       }),
     onSuccess: () => {
@@ -366,7 +562,7 @@ function PurchaseModal({
           )}
           <Field label="Sana">
             <input
-              type="datetime-local"
+              type="date"
               value={occurredAt}
               onChange={(e) => setOccurredAt(e.target.value)}
               className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
@@ -481,6 +677,157 @@ function AdjustModal({
             className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
           >
             Tuzatish
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviziyaModal({
+  ingredients,
+  onClose,
+}: {
+  ingredients: Ingredient[];
+  onClose: () => void;
+}) {
+  const [quantities, setQuantities] = useState<Record<number, string>>(
+    () => Object.fromEntries(ingredients.map((i) => [i.id, parseFloat(i.quantity).toFixed(2)]))
+  );
+  const [sessionNote, setSessionNote] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const changedItems = ingredients.filter((i) => {
+    const newVal = parseFloat(quantities[i.id] ?? "");
+    return !isNaN(newVal) && Math.abs(newVal - parseFloat(i.quantity)) > 0.001;
+  });
+
+  async function handleSave() {
+    if (changedItems.length === 0) {
+      setError("Hech qanday o'zgarish yo'q.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const items = changedItems.map((i) => ({
+        ingredient_id: i.id,
+        new_quantity: parseFloat(quantities[i.id]).toFixed(4),
+        note: sessionNote,
+      }));
+      await api.post("/inventory/revisions/batch/", { items, note: sessionNote });
+      onClose();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: unknown }; message?: string };
+      const d = err?.response?.data;
+      setError(
+        typeof d === "object" && d !== null
+          ? Object.values(d as Record<string, unknown>).flat().join(" ")
+          : typeof d === "string" ? d : err?.message ?? "Xatolik yuz berdi."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl bg-card rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[92vh] overflow-y-auto"
+      >
+        <div className="flex items-center gap-2 mb-1">
+          <ClipboardList className="size-5 text-amber-600" />
+          <h2 className="font-semibold text-lg">Inventarizatsiya (Reviziya)</h2>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          Har bir ingredientning haqiqiy zaxirasini kiriting. O'zgartirilmagan qatorlar saqlanmaydi.
+        </p>
+
+        <div className="rounded-xl border overflow-hidden mb-3">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-xs text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">Ingredient</th>
+                <th className="text-right px-3 py-2 font-medium">Hozirgi</th>
+                <th className="text-right px-3 py-2 font-medium w-36">Yangi zaxira</th>
+                <th className="text-right px-3 py-2 font-medium w-20 hidden sm:table-cell">Farq</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {ingredients.map((i) => {
+                const cur = parseFloat(i.quantity);
+                const newVal = parseFloat(quantities[i.id] ?? "");
+                const diff = isNaN(newVal) ? null : newVal - cur;
+                const changed = diff !== null && Math.abs(diff) > 0.001;
+                return (
+                  <tr key={i.id} className={changed ? "bg-amber-500/5" : ""}>
+                    <td className="px-3 py-2 font-medium">
+                      {i.name}
+                      <span className="text-xs text-muted-foreground ml-1">({i.unit_short})</span>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                      {cur.toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={quantities[i.id] ?? ""}
+                        onChange={(e) =>
+                          setQuantities((prev) => ({ ...prev, [i.id]: e.target.value }))
+                        }
+                        inputMode="decimal"
+                        className={`w-full h-8 rounded-md border px-2 text-sm tabular-nums text-right focus:ring-1 outline-none ${
+                          changed
+                            ? "border-amber-400 bg-amber-500/5 focus:ring-amber-400"
+                            : "bg-background focus:ring-bakery-400"
+                        }`}
+                      />
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums text-xs font-semibold hidden sm:table-cell ${diff !== null && diff > 0 ? "text-emerald-700" : diff !== null && diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                      {diff === null ? "—" : `${diff > 0 ? "+" : ""}${diff.toFixed(2)}`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {changedItems.length > 0 && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 mb-3">
+            {changedItems.length} ta ingredient o'zgartirildi
+          </div>
+        )}
+
+        <Field label="Sabab / izoh (ixtiyoriy)">
+          <input
+            className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+            value={sessionNote}
+            onChange={(e) => setSessionNote(e.target.value)}
+            placeholder="Masalan: oylik inventarizatsiya, yo'qotish..."
+          />
+        </Field>
+
+        {error && (
+          <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <button onClick={onClose} className="h-10 px-4 rounded-lg border text-sm hover:bg-muted">
+            Bekor qilish
+          </button>
+          <button
+            disabled={changedItems.length === 0 || saving}
+            onClick={handleSave}
+            className="h-10 px-4 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm disabled:opacity-50"
+          >
+            {saving ? "Saqlanmoqda…" : `Saqlash (${changedItems.length} ta o'zgarish)`}
           </button>
         </div>
       </div>

@@ -78,6 +78,9 @@ class OrderItemCreateSerializer(serializers.Serializer):
     product = serializers.IntegerField()
     unit_price = serializers.DecimalField(max_digits=16, decimal_places=2)
     quantity = serializers.IntegerField(min_value=1)
+    # Optional — how much of this line was delivered on creation (partial/delivered
+    # orders entered inline). Omitted/None means "use the status default".
+    delivered_quantity = serializers.IntegerField(min_value=0, required=False, allow_null=True)
 
 
 class OrderCreateSerializer(serializers.Serializer):
@@ -86,6 +89,9 @@ class OrderCreateSerializer(serializers.Serializer):
     delivery_time = serializers.DateTimeField(required=False, allow_null=True)
     priority = serializers.ChoiceField(
         choices=OrderPriority.choices, default=OrderPriority.NORMAL
+    )
+    status = serializers.ChoiceField(
+        choices=OrderStatus.choices, default=OrderStatus.PENDING, required=False
     )
     currency = serializers.ChoiceField(choices=[("UZS", "UZS"), ("USD", "USD")], default="UZS")
     note = serializers.CharField(required=False, allow_blank=True)

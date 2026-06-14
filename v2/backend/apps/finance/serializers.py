@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from .models import (
@@ -6,6 +7,7 @@ from .models import (
     GeneralExpense,
     KassaAccount,
     KassaTransaction,
+    KassaTransfer,
     Payment,
 )
 
@@ -82,10 +84,45 @@ class GeneralExpenseSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
 
 
+class KassaTransferSerializer(serializers.ModelSerializer):
+    from_account_name = serializers.CharField(source="from_account.name", read_only=True)
+    to_account_name = serializers.CharField(source="to_account.name", read_only=True)
+    created_by_name = serializers.CharField(
+        source="created_by.display_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = KassaTransfer
+        fields = [
+            "id", "from_account", "from_account_name",
+            "to_account", "to_account_name",
+            "currency", "amount", "occurred_at", "note",
+            "created_by", "created_by_name", "created_at",
+        ]
+        read_only_fields = ["created_at"]
+
+    def validate(self, data):
+        if data.get("from_account") == data.get("to_account"):
+            raise serializers.ValidationError(
+                {"to_account": "Bir xil kassaga o'tkazib bo'lmaydi."}
+            )
+        if data.get("amount", 0) <= 0:
+            raise serializers.ValidationError(
+                {"amount": "Summa musbat bo'lishi kerak."}
+            )
+        return data
+
+
 class CashHandoverSerializer(serializers.ModelSerializer):
     driver_name = serializers.CharField(source="driver.display_name", read_only=True)
-    received_by_name = serializers.CharField(source="received_by.display_name", read_only=True)
+    received_by_name = serializers.CharField(
+        source="received_by.display_name", read_only=True, default=""
+    )
     account_name = serializers.CharField(source="to_account.name", read_only=True)
+    received_by = serializers.PrimaryKeyRelatedField(
+        queryset=get_user_model().objects.all(),
+        required=False,
+    )
 
     class Meta:
         model = CashHandover

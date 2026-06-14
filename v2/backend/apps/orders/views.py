@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import F
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -64,6 +64,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         ser = OrderCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
+        chosen_status = data.get("status", OrderStatus.PENDING)
 
         with transaction.atomic():
             order = Order.objects.create(
@@ -71,21 +72,139 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order_date=data["order_date"],
                 delivery_time=data.get("delivery_time"),
                 priority=data.get("priority", "normal"),
+                status=chosen_status,
                 currency=data.get("currency", "UZS"),
                 note=data.get("note", ""),
                 created_by=request.user if request.user.is_authenticated else None,
             )
-            for item in data["items"]:
-                OrderItem.objects.create(
+            items = []
+            for item_data in data["items"]:
+                oi = OrderItem.objects.create(
                     order=order,
-                    product_id=item["product"],
-                    unit_price=item["unit_price"],
-                    quantity=item["quantity"],
+                    product_id=item_data["product"],
+                    unit_price=item_data["unit_price"],
+                    quantity=item_data["quantity"],
                 )
+                # Carry the optional inline delivered_quantity for the step below.
+                oi._delivered_input = item_data.get("delivered_quantity")
+                items.append(oi)
+
+            # Inline delivery — handle both DELIVERED (full unless overridden) and
+            # PARTIALLY_DELIVERED (per-item delivered_quantity entered in the form).
+            # This bumps finished-goods stock and the shop loan balance, then
+            # recomputes the real status from what was actually delivered.
+            if chosen_status in (OrderStatus.DELIVERED, OrderStatus.PARTIALLY_DELIVERED):
+                from apps.production.models import BakeryProductStock
+                shop = Shop.objects.select_for_update().get(pk=order.shop_id)
+                balance_delta = Decimal("0")
+                for oi in items:
+                    if chosen_status == OrderStatus.DELIVERED and oi._delivered_input is None:
+                        delivered = oi.quantity
+                    else:
+                        delivered = min(int(oi._delivered_input or 0), oi.quantity)
+                    if delivered <= 0:
+                        continue
+                    oi.delivered_quantity = delivered
+                    oi.save(update_fields=["delivered_quantity"])
+                    stock, _ = BakeryProductStock.objects.get_or_create(product_id=oi.product_id)
+                    BakeryProductStock.objects.filter(pk=stock.pk).update(
+                        quantity=F("quantity") - Decimal(str(delivered))
+                    )
+                    balance_delta += Decimal(str(delivered)) * oi.unit_price
+                if balance_delta != 0:
+                    if order.currency == "UZS":
+                        shop.loan_balance_uzs = F("loan_balance_uzs") + balance_delta
+                    else:
+                        shop.loan_balance_usd = F("loan_balance_usd") + balance_delta
+                    shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+
+                # Recompute status from actual delivered amounts (e.g. a "partial"
+                # where every line was filled becomes DELIVERED, and vice versa).
+                all_delivered = items and all(
+                    oi.delivered_quantity >= oi.quantity for oi in items
+                )
+                some_delivered = any(oi.delivered_quantity > 0 for oi in items)
+                new_status = (
+                    OrderStatus.DELIVERED if all_delivered
+                    else OrderStatus.PARTIALLY_DELIVERED if some_delivered
+                    else OrderStatus.PENDING
+                )
+                if new_status != order.status:
+                    order.status = new_status
+                    order.save(update_fields=["status"])
+
         return Response(
             OrderDetailSerializer(order).data,
             status=status.HTTP_201_CREATED,
         )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        order = self.get_object()
+
+        # Split request data: items handled separately, rest goes to serializer.
+        items_data = request.data.get("items")
+
+        with transaction.atomic():
+            order_locked = Order.objects.select_for_update().get(pk=order.pk)
+
+            # Calculate old delivered loan contribution before any changes.
+            old_delivered_value = sum(
+                Decimal(str(i.net_delivered)) * i.unit_price
+                for i in order_locked.items.all()
+            )
+
+            # Update order metadata fields via serializer.
+            ser = self.get_serializer(order_locked, data=request.data, partial=partial)
+            ser.is_valid(raise_exception=True)
+            updated_order = ser.save()
+
+            if items_data is not None:
+                from apps.production.models import BakeryProductStock
+
+                existing_ids = set(order_locked.items.values_list("id", flat=True))
+                submitted_ids = set()
+
+                for item_row in items_data:
+                    item_id = item_row.get("id")
+                    if item_id and item_id in existing_ids:
+                        # Update existing item.
+                        oi = order_locked.items.get(pk=item_id)
+                        oi.unit_price = Decimal(str(item_row.get("unit_price", oi.unit_price)))
+                        oi.quantity = int(item_row.get("quantity", oi.quantity))
+                        oi.save(update_fields=["unit_price", "quantity"])
+                        submitted_ids.add(item_id)
+                    else:
+                        # Create new item.
+                        oi = OrderItem.objects.create(
+                            order=order_locked,
+                            product_id=item_row["product"],
+                            unit_price=Decimal(str(item_row["unit_price"])),
+                            quantity=int(item_row["quantity"]),
+                        )
+                        submitted_ids.add(oi.id)
+
+                # Delete items not submitted.
+                for old_id in existing_ids - submitted_ids:
+                    order_locked.items.filter(pk=old_id).delete()
+
+                # Recalculate delivered value and adjust loan_balance.
+                new_delivered_value = sum(
+                    Decimal(str(i.net_delivered)) * i.unit_price
+                    for i in order_locked.items.all()
+                )
+                delta = new_delivered_value - old_delivered_value
+                if delta != 0:
+                    shop = Shop.objects.select_for_update().get(pk=order_locked.shop_id)
+                    if order_locked.currency == "UZS":
+                        shop.loan_balance_uzs = F("loan_balance_uzs") + delta
+                    else:
+                        shop.loan_balance_usd = F("loan_balance_usd") + delta
+                    shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+
+            updated_order.refresh_from_db()
+
+        return Response(OrderDetailSerializer(updated_order).data)
 
     @action(detail=True, methods=["post"])
     def confirm_delivery(self, request, pk=None):
@@ -105,12 +224,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             order = Order.objects.select_for_update().get(pk=order.pk)
             shop = Shop.objects.select_for_update().get(pk=order.shop_id)
 
-            # Ported from v1: when delivered_quantity changes we also adjust
-            # finished-goods stock. Net delivered = delivered - returned; we
-            # diff this vs the previously-recorded net and apply the delta.
             from apps.production.models import BakeryProductStock
 
             items_by_id = {i.id: i for i in order.items.all()}
+            balance_delta = Decimal("0")
+
             for row in ser.validated_data:
                 item = items_by_id.get(row["item_id"])
                 if not item or item.order_id != order.id:
@@ -119,18 +237,21 @@ class OrderViewSet(viewsets.ModelViewSet):
                 returned = min(row.get("returned_quantity", 0), delivered)
                 old_net = max(item.delivered_quantity - item.returned_quantity, 0)
                 new_net = max(delivered - returned, 0)
-                delta = new_net - old_net
+                qty_delta = new_net - old_net
                 item.delivered_quantity = delivered
                 item.returned_quantity = returned
                 item.save(update_fields=["delivered_quantity", "returned_quantity"])
 
-                if delta != 0:
+                if qty_delta != 0:
+                    # Adjust finished-goods stock by the same net-delivery delta.
                     stock, _ = BakeryProductStock.objects.get_or_create(
                         product_id=item.product_id
                     )
                     BakeryProductStock.objects.filter(pk=stock.pk).update(
-                        quantity=F("quantity") - delta
+                        quantity=F("quantity") - qty_delta
                     )
+                    # Accumulate shop loan balance delta (what we newly delivered).
+                    balance_delta += Decimal(str(qty_delta)) * item.unit_price
 
             # Recompute this order's status from items.
             items = list(order.items.all())
@@ -146,31 +267,15 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order.status = OrderStatus.PENDING
             order.save(update_fields=["status"])
 
-            # Recompute shop loan balance *for this currency* from scratch.
-            # Sum delivered_value across all shop orders - sum payments.
-            delivered_total = Decimal("0")
-            for o in Order.objects.filter(shop=shop, currency=order.currency).prefetch_related("items"):
-                for it in o.items.all():
-                    delivered_total += it.delivered_price
-
-            from apps.finance.models import Payment
-            paid_total = (
-                Payment.objects
-                .filter(shop=shop, currency=order.currency)
-                .aggregate(s=Sum("amount"))["s"] or Decimal("0")
-            )
-            discount_total = (
-                Payment.objects
-                .filter(shop=shop, currency=order.currency)
-                .aggregate(s=Sum("discount"))["s"] or Decimal("0")
-            )
-
-            new_balance = delivered_total - paid_total - discount_total
-            if order.currency == "UZS":
-                shop.loan_balance_uzs = new_balance
-            else:
-                shop.loan_balance_usd = new_balance
-            shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+            # Apply delta to shop loan balance — delta-based so historical data
+            # (e.g. V1-migrated orders without corresponding V2 payments) doesn't
+            # corrupt the running balance. Payments use the same approach.
+            if balance_delta != 0:
+                if order.currency == "UZS":
+                    shop.loan_balance_uzs = F("loan_balance_uzs") + balance_delta
+                else:
+                    shop.loan_balance_usd = F("loan_balance_usd") + balance_delta
+                shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
 
         return Response(OrderDetailSerializer(order).data)
 
@@ -183,7 +288,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             new_order = Order.objects.create(
                 shop=source.shop,
                 order_date=timezone.localdate(),
-                delivery_time=source.delivery_time,
+                delivery_time=None,  # don't copy stale delivery_time
                 priority=source.priority,
                 currency=source.currency,
                 status=OrderStatus.PENDING,
