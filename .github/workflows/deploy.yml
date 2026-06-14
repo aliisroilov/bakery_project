@@ -1,0 +1,47 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/deploy/bakery_v2
+
+            echo "==> Pulling latest code..."
+            git pull origin main
+
+            echo "==> Installing Python dependencies..."
+            cd v2/backend
+            source venv/bin/activate
+            pip install -r requirements.txt --quiet
+
+            echo "==> Running migrations..."
+            python manage.py migrate --noinput
+
+            echo "==> Collecting static files..."
+            python manage.py collectstatic --noinput
+            deactivate
+
+            echo "==> Building frontend..."
+            cd /home/deploy/bakery_v2/v2/frontend
+            npm ci --silent
+            npm run build
+
+            echo "==> Reloading gunicorn..."
+            kill -HUP $(systemctl show bakery-v2-gunicorn -p MainPID --value)
+
+            echo "==> Deploy complete!"
