@@ -7,6 +7,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import IsManagerOrAdmin, ReadOrManagerWrite
+
 from .models import EmployeeGroup, User, UserActivityLog
 from .serializers import (
     CurrentUserSerializer,
@@ -26,7 +28,7 @@ class MeView(APIView):
 
 class UserViewSet(viewsets.ModelViewSet):
     """User directory — create/update/archive via API."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = UserSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["username", "full_name", "phone"]
@@ -104,7 +106,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
 class EmployeeGroupViewSet(viewsets.ModelViewSet):
     """CRUD for employee groups."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = EmployeeGroupSerializer
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
@@ -115,7 +117,7 @@ class EmployeeGroupViewSet(viewsets.ModelViewSet):
 
 class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     """Feature #15 — professional user activity log."""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsManagerOrAdmin]
     serializer_class = UserActivityLogSerializer
 
     def get_queryset(self):

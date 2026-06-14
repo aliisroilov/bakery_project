@@ -104,6 +104,16 @@ class OrderItem(models.Model):
 
     class Meta:
         ordering = ["id"]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(delivered_quantity__lte=models.F("quantity")),
+                name="orderitem_delivered_lte_quantity",
+            ),
+            models.CheckConstraint(
+                check=models.Q(returned_quantity__lte=models.F("delivered_quantity")),
+                name="orderitem_returned_lte_delivered",
+            ),
+        ]
 
     @property
     def net_delivered(self) -> int:

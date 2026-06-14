@@ -2,13 +2,14 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import Count, F, Sum
 from django.utils import timezone
 from rest_framework import filters, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import ReadOrManagerWrite
 from apps.shops.models import Shop
 
 from .models import (
@@ -40,7 +41,7 @@ class KassaAccountViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class KassaTransactionViewSet(viewsets.ReadOnlyModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = KassaTransactionSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["occurred_at", "amount"]
@@ -104,7 +105,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
     Feature #16: `discount` — on top of the cash amount, also reduces shop debt.
     Feature #20: `collected_by` — dashboard breaks down by collector.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = PaymentSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["received_at", "amount"]
@@ -154,19 +155,27 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 old_shop.loan_balance_usd = F("loan_balance_usd") + old_delta
             old_shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
 
+            # Apply new shop balance change.
+            _apply_payment_to_shop_balance(payment)
+
+            # Lock both KassaAccounts in deterministic (sorted) order to prevent
+            # deadlocks when two concurrent updates swap old/new accounts.
+            acct_ids = sorted({old_account_id, payment.account_id})
+            accounts = {
+                a.id: a
+                for a in KassaAccount.objects.select_for_update().filter(id__in=acct_ids)
+            }
+
             # Reverse old kassa credit.
-            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+            old_account = accounts[old_account_id]
             if old_currency == "UZS":
                 old_account.balance_uzs = F("balance_uzs") - old_amount
             else:
                 old_account.balance_usd = F("balance_usd") - old_amount
             old_account.save(update_fields=["balance_uzs", "balance_usd"])
 
-            # Apply new shop balance change.
-            _apply_payment_to_shop_balance(payment)
-
             # Apply new kassa credit.
-            new_account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
+            new_account = accounts[payment.account_id]
             if payment.currency == "UZS":
                 new_account.balance_uzs = F("balance_uzs") + payment.amount
             else:
@@ -212,13 +221,13 @@ class PaymentViewSet(viewsets.ModelViewSet):
 
 # ─────────────────── Expenses ───────────────────
 class ExpenseCategoryViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = ExpenseCategorySerializer
     queryset = ExpenseCategory.objects.all()
 
 
 class GeneralExpenseViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = GeneralExpenseSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["occurred_at", "amount"]
@@ -311,7 +320,7 @@ class GeneralExpenseViewSet(viewsets.ModelViewSet):
 
 # ─────────────────── Cash Handover (feature #25) ───────────────────
 class CashHandoverViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = CashHandoverSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["occurred_at", "amount"]
@@ -410,7 +419,7 @@ class KassaTransferViewSet(viewsets.ModelViewSet):
     On destroy: reverse both balance changes and delete the ledger rows.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = KassaTransferSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["occurred_at", "amount"]
@@ -583,9 +592,39 @@ class DriverHandoverReportView(APIView):
         dt = date_to or today.isoformat()
 
         User = get_user_model()
-        drivers = User.objects.filter(role="driver", is_archived=False).order_by(
-            "username"
+        drivers = list(
+            User.objects.filter(role="driver", is_archived=False).order_by("username")
         )
+        driver_ids = [d.id for d in drivers]
+
+        # Two queries total (previously N×4 per driver).
+        payment_aggs = (
+            Payment.objects.filter(
+                collected_by_id__in=driver_ids,
+                received_at__date__gte=df,
+                received_at__date__lte=dt,
+            )
+            .values("collected_by_id", "currency")
+            .annotate(total=Sum("amount"), count=Count("id"))
+        )
+        handover_aggs = (
+            CashHandover.objects.filter(
+                driver_id__in=driver_ids,
+                occurred_at__date__gte=df,
+                occurred_at__date__lte=dt,
+            )
+            .values("driver_id", "currency")
+            .annotate(total=Sum("amount"), count=Count("id"))
+        )
+
+        # Build per-driver lookup dicts.
+        p_map: dict = {}
+        for row in payment_aggs:
+            p_map.setdefault(row["collected_by_id"], {})[row["currency"]] = row
+
+        h_map: dict = {}
+        for row in handover_aggs:
+            h_map.setdefault(row["driver_id"], {})[row["currency"]] = row
 
         results = []
         totals = {
@@ -596,33 +635,15 @@ class DriverHandoverReportView(APIView):
         }
 
         for d in drivers:
-            payments = Payment.objects.filter(
-                collected_by=d,
-                received_at__date__gte=df,
-                received_at__date__lte=dt,
-            )
-            handovers = CashHandover.objects.filter(
-                driver=d,
-                occurred_at__date__gte=df,
-                occurred_at__date__lte=dt,
-            )
+            dp = p_map.get(d.id, {})
+            dh = h_map.get(d.id, {})
+            collected_uzs = dp.get("UZS", {}).get("total") or Decimal("0")
+            collected_usd = dp.get("USD", {}).get("total") or Decimal("0")
+            handed_uzs = dh.get("UZS", {}).get("total") or Decimal("0")
+            handed_usd = dh.get("USD", {}).get("total") or Decimal("0")
+            payment_count = sum(v["count"] for v in dp.values())
+            handover_count = sum(v["count"] for v in dh.values())
 
-            collected_uzs = (
-                payments.filter(currency="UZS").aggregate(s=Sum("amount"))["s"]
-                or Decimal("0")
-            )
-            collected_usd = (
-                payments.filter(currency="USD").aggregate(s=Sum("amount"))["s"]
-                or Decimal("0")
-            )
-            handed_uzs = (
-                handovers.filter(currency="UZS").aggregate(s=Sum("amount"))["s"]
-                or Decimal("0")
-            )
-            handed_usd = (
-                handovers.filter(currency="USD").aggregate(s=Sum("amount"))["s"]
-                or Decimal("0")
-            )
             totals["collected_uzs"] += collected_uzs
             totals["collected_usd"] += collected_usd
             totals["handed_uzs"] += handed_uzs
@@ -639,8 +660,8 @@ class DriverHandoverReportView(APIView):
                     "handed_usd": str(handed_usd),
                     "pending_uzs": str(collected_uzs - handed_uzs),
                     "pending_usd": str(collected_usd - handed_usd),
-                    "payment_count": payments.count(),
-                    "handover_count": handovers.count(),
+                    "payment_count": payment_count,
+                    "handover_count": handover_count,
                 }
             )
 

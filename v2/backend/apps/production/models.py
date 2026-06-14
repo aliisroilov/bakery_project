@@ -8,6 +8,7 @@ Feature #21: per-nonvoy salary history (per-day qop count) → Production aggreg
 import uuid
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.core.constants import QTY_DECIMAL_PLACES, QTY_MAX_DIGITS
@@ -60,6 +61,11 @@ class Production(TimestampedModel):
             models.Index(fields=["product", "-occurred_at"]),
             models.Index(fields=["nonvoy", "-occurred_at"]),
         ]
+    def clean(self):
+        if not self.nonvoy_id and not self.group_id:
+            raise ValidationError("Either nonvoy or group must be set.")
+        if self.nonvoy_id and self.group_id:
+            raise ValidationError("Cannot set both nonvoy and group.")
 
     @property
     def actor_name(self) -> str:

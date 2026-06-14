@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import ReadOrManagerWrite
 from apps.finance.models import KassaAccount, KassaTransaction, KassaTransactionType
 from apps.production.models import Production
 
@@ -18,7 +19,7 @@ from .utils import calculate_earned_period
 
 
 class SalaryRateViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = SalaryRateSerializer
     queryset = SalaryRate.objects.select_related("user")
 
@@ -38,7 +39,7 @@ KIND_TO_KASSA_KIND = {
 
 
 class SalaryPaymentViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [ReadOrManagerWrite]
     serializer_class = SalaryPaymentSerializer
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["occurred_at", "amount"]

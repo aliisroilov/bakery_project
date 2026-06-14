@@ -2,11 +2,13 @@ from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import F
+from django.utils import timezone
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.production.models import BakeryProductStock
 from apps.shops.models import Shop
 
 from .models import Order, OrderItem, OrderStatus
@@ -94,7 +96,6 @@ class OrderViewSet(viewsets.ModelViewSet):
             # This bumps finished-goods stock and the shop loan balance, then
             # recomputes the real status from what was actually delivered.
             if chosen_status in (OrderStatus.DELIVERED, OrderStatus.PARTIALLY_DELIVERED):
-                from apps.production.models import BakeryProductStock
                 shop = Shop.objects.select_for_update().get(pk=order.shop_id)
                 balance_delta = Decimal("0")
                 for oi in items:
@@ -160,8 +161,6 @@ class OrderViewSet(viewsets.ModelViewSet):
             updated_order = ser.save()
 
             if items_data is not None:
-                from apps.production.models import BakeryProductStock
-
                 existing_ids = set(order_locked.items.values_list("id", flat=True))
                 submitted_ids = set()
 
@@ -224,8 +223,6 @@ class OrderViewSet(viewsets.ModelViewSet):
             order = Order.objects.select_for_update().get(pk=order.pk)
             shop = Shop.objects.select_for_update().get(pk=order.shop_id)
 
-            from apps.production.models import BakeryProductStock
-
             items_by_id = {i.id: i for i in order.items.all()}
             balance_delta = Decimal("0")
 
@@ -283,7 +280,6 @@ class OrderViewSet(viewsets.ModelViewSet):
     def repeat(self, request, pk=None):
         """Feature #3 — clone this order as a new PENDING order for the same shop."""
         source = self.get_object()
-        from django.utils import timezone
         with transaction.atomic():
             new_order = Order.objects.create(
                 shop=source.shop,
