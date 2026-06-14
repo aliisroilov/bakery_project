@@ -14,9 +14,9 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.environ.get('POSTGRES_DB', 'bakery_db'),
         'USER': os.environ.get('POSTGRES_USER', 'bakuser'),
-        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', '0270'),
+        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
         'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
-        'PORT': os.environ.get('POSTGRES_PORT', ''),
+        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
     }
 }
 

@@ -51,3 +51,6 @@ Thumbs.db
 
 # ─── Claude / AI tooling ───
 .claude/
+
+# ─── Dumps / one-off scripts ───
+data.json
