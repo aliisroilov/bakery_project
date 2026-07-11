@@ -20,17 +20,15 @@ from apps.salary.models import SalaryPayment
 from apps.shops.models import Shop
 
 
-def _today_bounds():
-    """Return (start_of_day, end_of_day) in the server timezone."""
-    now = timezone.localtime()
-    start = timezone.make_aware(datetime.combine(now.date(), time.min))
-    end = timezone.make_aware(datetime.combine(now.date(), time.max))
+def _day_bounds(d):
+    """Return (start_of_day, end_of_day) for date `d` in the server timezone."""
+    start = timezone.make_aware(datetime.combine(d, time.min))
+    end = timezone.make_aware(datetime.combine(d, time.max))
     return start, end
 
 
-def _month_start():
-    now = timezone.localtime()
-    return timezone.make_aware(datetime.combine(now.date().replace(day=1), time.min))
+def _month_start(d):
+    return timezone.make_aware(datetime.combine(d.replace(day=1), time.min))
 
 
 class DashboardSummaryView(APIView):
@@ -43,8 +41,17 @@ class DashboardSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        today_start, today_end = _today_bounds()
-        month_start = _month_start()
+        # Optional ?date=YYYY-MM-DD — show that day's figures (defaults to today).
+        sel_date = timezone.localdate()
+        if raw := request.query_params.get("date"):
+            try:
+                sel_date = date.fromisoformat(raw)
+            except ValueError:
+                sel_date = timezone.localdate()
+        is_today = sel_date == timezone.localdate()
+
+        today_start, today_end = _day_bounds(sel_date)
+        month_start = _month_start(sel_date)
 
         # ── Kassa balances (Seyf + Rizoxon) ─────────────────────────
         accounts = [
@@ -147,8 +154,8 @@ class DashboardSummaryView(APIView):
             status__in=[OrderStatus.PENDING, OrderStatus.PARTIALLY_DELIVERED]
         ).count()
 
-        # ── Today's order counts by status (v1 parity) ──────────────
-        today_orders = Order.objects.filter(order_date=timezone.localdate())
+        # ── Selected day's order counts by status (v1 parity) ───────
+        today_orders = Order.objects.filter(order_date=sel_date)
         orders_today_total = today_orders.count()
         orders_today_pending = today_orders.filter(status=OrderStatus.PENDING).count()
         orders_today_partial = today_orders.filter(
@@ -194,6 +201,8 @@ class DashboardSummaryView(APIView):
 
         return Response(
             {
+                "date": sel_date.isoformat(),
+                "is_today": is_today,
                 "accounts": accounts,
                 "kirim_today": {
                     "uzs": str(kirim_today_uzs),

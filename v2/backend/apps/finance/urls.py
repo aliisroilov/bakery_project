@@ -7,6 +7,7 @@ from .views import (
     ExpenseCategoryViewSet,
     GeneralExpenseViewSet,
     KassaAccountViewSet,
+    KassaExchangeViewSet,
     KassaTransactionViewSet,
     KassaTransferViewSet,
     PaymentViewSet,
@@ -22,6 +23,7 @@ router.register(r"expense-categories", ExpenseCategoryViewSet, basename="expense
 router.register(r"expenses", GeneralExpenseViewSet, basename="expense")
 router.register(r"handovers", CashHandoverViewSet, basename="handover")
 router.register(r"transfers", KassaTransferViewSet, basename="transfer")
+router.register(r"exchanges", KassaExchangeViewSet, basename="exchange")
 
 urlpatterns = [
     path(

@@ -12,6 +12,8 @@ export interface KassaAccount {
 }
 
 export interface DashboardSummary {
+  date?: string;
+  is_today?: boolean;
   accounts: KassaAccount[];
   kirim_today: {
     uzs: string;

@@ -17,6 +17,7 @@ from .models import (
     ExpenseCategory,
     GeneralExpense,
     KassaAccount,
+    KassaExchange,
     KassaTransaction,
     KassaTransactionType,
     KassaTransfer,
@@ -27,6 +28,7 @@ from .serializers import (
     ExpenseCategorySerializer,
     GeneralExpenseSerializer,
     KassaAccountSerializer,
+    KassaExchangeSerializer,
     KassaTransactionSerializer,
     KassaTransferSerializer,
     PaymentSerializer,
@@ -566,6 +568,113 @@ class KassaTransferViewSet(viewsets.ModelViewSet):
 
             KassaTransaction.objects.filter(
                 reference_model="finance.KassaTransfer",
+                reference_id=instance.id,
+            ).delete()
+            instance.delete()
+
+
+class KassaExchangeViewSet(viewsets.ModelViewSet):
+    """
+    Currency exchange inside one kassa (UZS ↔ USD).
+
+    Debits the `from_currency` balance and credits the `to_currency` balance on
+    the same account, and writes two ledger rows. Editing is intentionally not
+    supported (delete + recreate instead) to keep the two-currency math simple.
+    """
+
+    permission_classes = [ReadOrManagerWrite]
+    serializer_class = KassaExchangeSerializer
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ["occurred_at"]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_queryset(self):
+        qs = KassaExchange.objects.select_related("account", "created_by")
+        p = self.request.query_params
+        if account := p.get("account"):
+            qs = qs.filter(account_id=account)
+        if date_from := p.get("date_from"):
+            qs = qs.filter(occurred_at__date__gte=date_from)
+        if date_to := p.get("date_to"):
+            qs = qs.filter(occurred_at__date__lte=date_to)
+        return qs
+
+    def perform_create(self, serializer):
+        from rest_framework.serializers import ValidationError
+
+        with transaction.atomic():
+            account = KassaAccount.objects.select_for_update().get(
+                pk=serializer.validated_data["account"].id
+            )
+            ex = serializer.validated_data
+            from_cur = ex["from_currency"]
+            from_amount = ex["from_amount"]
+            to_cur = ex["to_currency"]
+            to_amount = ex["to_amount"]
+
+            # Guard: enough money in the source currency.
+            available = account.balance_uzs if from_cur == "UZS" else account.balance_usd
+            if from_amount > available:
+                raise ValidationError(
+                    {"from_amount": f"{account.name} kassasida yetarli {from_cur} yo'q."}
+                )
+
+            exchange = serializer.save(created_by=self.request.user)
+
+            # Debit source currency, credit target currency (different fields —
+            # from_currency != to_currency is enforced by the serializer).
+            if from_cur == "UZS":
+                account.balance_uzs = F("balance_uzs") - from_amount
+            else:
+                account.balance_usd = F("balance_usd") - from_amount
+            if to_cur == "UZS":
+                account.balance_uzs = F("balance_uzs") + to_amount
+            else:
+                account.balance_usd = F("balance_usd") + to_amount
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            base_note = exchange.note or f"{from_amount} {from_cur} → {to_amount} {to_cur}"
+            # Debit leg.
+            KassaTransaction.objects.create(
+                account=exchange.account,
+                kind=KassaTransactionType.EXCHANGE,
+                currency=from_cur,
+                amount=-from_amount,
+                reference_model="finance.KassaExchange",
+                reference_id=exchange.id,
+                note=f"Ayirboshlash → {to_cur} · {base_note}",
+                occurred_at=exchange.occurred_at,
+                created_by=self.request.user,
+            )
+            # Credit leg.
+            KassaTransaction.objects.create(
+                account=exchange.account,
+                kind=KassaTransactionType.EXCHANGE,
+                currency=to_cur,
+                amount=to_amount,
+                reference_model="finance.KassaExchange",
+                reference_id=exchange.id,
+                note=f"Ayirboshlash ← {from_cur} · {base_note}",
+                occurred_at=exchange.occurred_at,
+                created_by=self.request.user,
+            )
+
+    def perform_destroy(self, instance):
+        with transaction.atomic():
+            account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
+            # Reverse: credit back source currency, debit target currency.
+            if instance.from_currency == "UZS":
+                account.balance_uzs = F("balance_uzs") + instance.from_amount
+            else:
+                account.balance_usd = F("balance_usd") + instance.from_amount
+            if instance.to_currency == "UZS":
+                account.balance_uzs = F("balance_uzs") - instance.to_amount
+            else:
+                account.balance_usd = F("balance_usd") - instance.to_amount
+            account.save(update_fields=["balance_uzs", "balance_usd"])
+
+            KassaTransaction.objects.filter(
+                reference_model="finance.KassaExchange",
                 reference_id=instance.id,
             ).delete()
             instance.delete()

@@ -11,6 +11,7 @@ import {
   TrendingUp,
   ArrowRight,
   ArrowLeftRight,
+  Repeat,
   Pencil,
   X,
 } from "lucide-react";
@@ -198,7 +199,7 @@ export function KassaPage() {
             onClick={() => setTransferOpen(true)}
             className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-sky-400 text-sky-700 hover:bg-sky-50 text-sm"
           >
-            <ArrowLeftRight className="size-4" /> <span className="hidden sm:inline">O'tkazma</span><span className="sm:hidden">O'tkazma</span>
+            <ArrowLeftRight className="size-4" /> <span>O'tkazma</span>
           </button>
           <button
             onClick={() => setChiqimOpen(true)}
@@ -855,6 +856,49 @@ function TransferModal({
   accounts: KassaAccount[];
   onClose: () => void;
 }) {
+  // One dialog, two related money tools: moving cash between kassas, and
+  // exchanging currency inside one kassa.
+  const [tab, setTab] = useState<"transfer" | "exchange">("transfer");
+
+  const tabBtn = (active: boolean) =>
+    `flex-1 inline-flex items-center justify-center gap-1.5 h-9 rounded-lg text-sm transition-colors ${
+      active ? "bg-card shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"
+    }`;
+
+  return (
+    <div
+      className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md bg-card rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex gap-1 p-1 rounded-xl bg-muted/60 mb-4">
+          <button className={tabBtn(tab === "transfer")} onClick={() => setTab("transfer")}>
+            <ArrowLeftRight className="size-4" /> O'tkazma
+          </button>
+          <button className={tabBtn(tab === "exchange")} onClick={() => setTab("exchange")}>
+            <Repeat className="size-4" /> Ayirboshlash
+          </button>
+        </div>
+        {tab === "transfer" ? (
+          <TransferForm accounts={accounts} onClose={onClose} />
+        ) : (
+          <ExchangeForm accounts={accounts} onClose={onClose} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TransferForm({
+  accounts,
+  onClose,
+}: {
+  accounts: KassaAccount[];
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
 
   const defaultFrom = accounts[0]?.id ?? "";
@@ -864,6 +908,7 @@ function TransferModal({
   const [toId, setToId] = useState<number | "">(defaultTo);
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
   const [amount, setAmount] = useState("");
+  const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr().slice(0, 10));
   const [note, setNote] = useState("");
 
   const fromAccount = accounts.find((a) => a.id === fromId);
@@ -891,7 +936,7 @@ function TransferModal({
         to_account: toId,
         currency,
         amount,
-        occurred_at: new Date().toISOString(),
+        occurred_at: tashkentToISO(`${occurredAt}T${nowTashkentStr().slice(11, 16)}`),
         note,
       }),
     onSuccess: () => {
@@ -904,21 +949,10 @@ function TransferModal({
     !!fromId && !!toId && !sameAccount && amountNum > 0 && !insufficient && !create.isPending;
 
   return (
-    <div
-      className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-card rounded-2xl shadow-xl border p-4 sm:p-6"
-      >
-        <h2 className="font-semibold text-lg mb-1 flex items-center gap-2">
-          <ArrowLeftRight className="size-5 text-sky-600" />
-          Kassalar o'rtasida o'tkazma
-        </h2>
-        <p className="text-xs text-muted-foreground mb-4">
-          Bir kassadan ikkinchisiga pul o'tkazish
-        </p>
+    <>
+      <p className="text-xs text-muted-foreground mb-4">
+        Bir kassadan ikkinchisiga pul o'tkazish
+      </p>
 
         {/* From / swap / To row */}
         <div className="flex items-end gap-2 mb-3">
@@ -1017,6 +1051,14 @@ function TransferModal({
                 : formatMoney(fromAccount!.balance_usd, "USD")}).
             </p>
           )}
+          <Field label="Sana">
+            <input
+              type="date"
+              value={occurredAt}
+              onChange={(e) => setOccurredAt(e.target.value)}
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+            />
+          </Field>
           <Field label="Izoh (ixtiyoriy)">
             <input
               className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
@@ -1048,8 +1090,199 @@ function TransferModal({
             {create.isPending ? "O'tkazilmoqda…" : "O'tkazish"}
           </button>
         </div>
-      </div>
-    </div>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ExchangeForm({
+  accounts,
+  onClose,
+}: {
+  accounts: KassaAccount[];
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [accountId, setAccountId] = useState<number | "">(accounts[0]?.id ?? "");
+  const [direction, setDirection] = useState<"USD_UZS" | "UZS_USD">("USD_UZS");
+  const [fromAmount, setFromAmount] = useState("");
+  const [rate, setRate] = useState("");
+  const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr().slice(0, 10));
+  const [note, setNote] = useState("");
+
+  const fromCur: "UZS" | "USD" = direction === "USD_UZS" ? "USD" : "UZS";
+  const toCur: "UZS" | "USD" = direction === "USD_UZS" ? "UZS" : "USD";
+
+  const account = accounts.find((a) => a.id === accountId);
+  const fromAmountNum = parseFloat(fromAmount) || 0;
+  const rateNum = parseFloat(rate) || 0;
+  // rate is always UZS per 1 USD. Convert accordingly.
+  const toAmountNum =
+    direction === "USD_UZS"
+      ? fromAmountNum * rateNum
+      : rateNum > 0
+        ? fromAmountNum / rateNum
+        : 0;
+
+  const available = account
+    ? fromCur === "UZS"
+      ? parseFloat(account.balance_uzs)
+      : parseFloat(account.balance_usd)
+    : null;
+  const insufficient = available !== null && fromAmountNum > available;
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post("/finance/exchanges/", {
+        account: accountId,
+        from_currency: fromCur,
+        to_currency: toCur,
+        from_amount: fromAmount,
+        to_amount: toAmountNum.toFixed(2),
+        rate: rate || "0",
+        occurred_at: tashkentToISO(`${occurredAt}T${nowTashkentStr().slice(11, 16)}`),
+        note,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["kassa"] });
+      onClose();
+    },
+  });
+
+  const canSave =
+    !!accountId &&
+    fromAmountNum > 0 &&
+    rateNum > 0 &&
+    toAmountNum > 0 &&
+    !insufficient &&
+    !create.isPending;
+
+  return (
+    <>
+        <p className="text-xs text-muted-foreground mb-4">
+          Kassa ichida so'mni dollarga yoki dollarni so'mga aylantirish
+        </p>
+
+        <div className="space-y-3">
+          <Field label="Kassa">
+            <select
+              value={accountId}
+              onChange={(e) => setAccountId(Number(e.target.value))}
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </Field>
+
+          {/* Direction */}
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Yo'nalish</label>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-10 rounded-lg border bg-muted/40 grid place-items-center text-sm font-medium tabular-nums">
+                {fromCur}
+              </div>
+              <button
+                type="button"
+                onClick={() => setDirection((d) => (d === "USD_UZS" ? "UZS_USD" : "USD_UZS"))}
+                title="Yo'nalishni almashtirish"
+                className="h-10 w-10 shrink-0 grid place-items-center rounded-lg border hover:bg-muted transition-colors"
+              >
+                <ArrowLeftRight className="size-4 text-muted-foreground" />
+              </button>
+              <div className="flex-1 h-10 rounded-lg border bg-muted/40 grid place-items-center text-sm font-medium tabular-nums">
+                {toCur}
+              </div>
+            </div>
+          </div>
+
+          <Field label="Kurs (1 USD = ? UZS)">
+            <input
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+              value={rate}
+              onChange={(e) => setRate(e.target.value)}
+              inputMode="decimal"
+              placeholder="Masalan: 12600"
+            />
+          </Field>
+
+          <Field label={`Beriladigan summa (${fromCur})`}>
+            <input
+              className={`w-full h-10 rounded-lg border px-3 text-sm tabular-nums ${
+                insufficient ? "border-destructive bg-destructive/5" : "bg-background"
+              }`}
+              value={fromAmount}
+              onChange={(e) => setFromAmount(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+            />
+          </Field>
+
+          {available !== null && (
+            <p className={`text-xs -mt-1 ${insufficient ? "text-destructive" : "text-muted-foreground"}`}>
+              {account?.name} kassasidagi {fromCur}: {formatMoney(String(available), fromCur)}
+              {insufficient && " — yetarli emas"}
+            </p>
+          )}
+
+          {/* Result preview */}
+          {fromAmountNum > 0 && rateNum > 0 && (
+            <div className="rounded-xl bg-violet-500/10 border border-violet-200 px-4 py-3 flex items-center justify-between gap-2">
+              <div className="text-center min-w-0">
+                <div className="text-xs text-muted-foreground">Beriladi</div>
+                <div className="font-semibold tabular-nums truncate">
+                  {formatMoney(String(fromAmountNum), fromCur)}
+                </div>
+              </div>
+              <ArrowRight className="size-4 text-violet-600 shrink-0" />
+              <div className="text-center min-w-0">
+                <div className="text-xs text-muted-foreground">Olinadi</div>
+                <div className="font-semibold tabular-nums text-violet-700 truncate">
+                  {formatMoney(String(toAmountNum), toCur)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <Field label="Sana">
+            <input
+              type="date"
+              value={occurredAt}
+              onChange={(e) => setOccurredAt(e.target.value)}
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+            />
+          </Field>
+          <Field label="Izoh (ixtiyoriy)">
+            <input
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Masalan: bankdan dollar sotildi"
+            />
+          </Field>
+        </div>
+
+        {create.isError && (
+          <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
+            {getApiError(create.error)}
+          </div>
+        )}
+
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <button onClick={onClose} className="h-10 px-4 rounded-lg border text-sm hover:bg-muted">
+            Bekor qilish
+          </button>
+          <button
+            disabled={!canSave}
+            onClick={() => create.mutate()}
+            className="h-10 px-4 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {create.isPending ? "Saqlanmoqda…" : "Ayirboshlash"}
+          </button>
+        </div>
+    </>
   );
 }
 
@@ -1592,6 +1825,9 @@ function EditTransactionModal({
   const [amount,      setAmount]      = useState("");
   const [note,        setNote]        = useState("");
   const [occurredAt,  setOccurredAt]  = useState("");
+  // Preserve the record's original time-of-day on edit (HH:mm, Tashkent) so
+  // saving doesn't reset the timestamp to 00:00.
+  const [origTime,    setOrigTime]    = useState("00:00");
   const [accountId,   setAccountId]   = useState<number | "">("");
   const [fromAccount, setFromAccount] = useState<number | "">("");  // transfer only
   const [toAccount,   setToAccount]   = useState<number | "">("");  // transfer only
@@ -1605,6 +1841,7 @@ function EditTransactionModal({
       setAmount(paymentData.amount);
       setNote(paymentData.note ?? "");
       setOccurredAt(paymentData.received_at ? fmtDate(paymentData.received_at) : "");
+      setOrigTime(paymentData.received_at ? fmtDateTime(paymentData.received_at).slice(11, 16) : "00:00");
       setAccountId(paymentData.account);
     }
   }, [paymentData]);
@@ -1615,6 +1852,7 @@ function EditTransactionModal({
       setAmount(expenseData.amount);
       setNote(expenseData.note ?? "");
       setOccurredAt(expenseData.occurred_at ? fmtDate(expenseData.occurred_at) : "");
+      setOrigTime(expenseData.occurred_at ? fmtDateTime(expenseData.occurred_at).slice(11, 16) : "00:00");
       setAccountId(expenseData.account);
     }
   }, [expenseData]);
@@ -1625,6 +1863,7 @@ function EditTransactionModal({
       setAmount(salaryData.amount);
       setNote(salaryData.note ?? "");
       setOccurredAt(salaryData.occurred_at ? fmtDate(salaryData.occurred_at) : "");
+      setOrigTime(salaryData.occurred_at ? fmtDateTime(salaryData.occurred_at).slice(11, 16) : "00:00");
       setAccountId(salaryData.account);
     }
   }, [salaryData]);
@@ -1635,6 +1874,7 @@ function EditTransactionModal({
       setAmount(purchaseData.total_price);
       setNote(purchaseData.note ?? "");
       setOccurredAt(purchaseData.occurred_at ? fmtDate(purchaseData.occurred_at) : "");
+      setOrigTime(purchaseData.occurred_at ? fmtDateTime(purchaseData.occurred_at).slice(11, 16) : "00:00");
       setAccountId(purchaseData.account);
     }
   }, [purchaseData]);
@@ -1644,6 +1884,7 @@ function EditTransactionModal({
       setAmount(handoverData.amount);
       setNote(handoverData.note ?? "");
       setOccurredAt(handoverData.occurred_at ? fmtDate(handoverData.occurred_at) : "");
+      setOrigTime(handoverData.occurred_at ? fmtDateTime(handoverData.occurred_at).slice(11, 16) : "00:00");
       setAccountId(handoverData.to_account);
     }
   }, [handoverData]);
@@ -1653,6 +1894,7 @@ function EditTransactionModal({
       setAmount(transferData.amount);
       setNote(transferData.note ?? "");
       setOccurredAt(transferData.occurred_at ? fmtDate(transferData.occurred_at) : "");
+      setOrigTime(transferData.occurred_at ? fmtDateTime(transferData.occurred_at).slice(11, 16) : "00:00");
       setFromAccount(transferData.from_account);
       setToAccount(transferData.to_account);
     }
@@ -1661,7 +1903,8 @@ function EditTransactionModal({
   // ── Save mutation ────────────────────────────────────────────────
   const save = useMutation({
     mutationFn: () => {
-      const dateIso = tashkentToISO(occurredAt + "T00:00");
+      // Keep the record's original time-of-day; only the date is editable here.
+      const dateIso = tashkentToISO(occurredAt + "T" + (origTime || "00:00"));
       const id = tx.reference_id!;
       if (isPayment) {
         return api.patch(`/finance/payments/${id}/`, {

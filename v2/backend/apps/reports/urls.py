@@ -15,6 +15,7 @@ urlpatterns = [
     path("pnl-daily.xlsx", views.PnlDailyExportView.as_view(), name="pnl-daily-export"),
     path("gross-overall.xlsx", views.GrossOverallExportView.as_view(), name="gross-overall-export"),
     path("gross-daily/", views.GrossDailyView.as_view(), name="gross-daily"),
+    path("pnl-detail/", views.PnlDetailView.as_view(), name="pnl-detail"),
     path("cos/", views.CosBreakdownView.as_view(), name="cos"),
     path("sofp/", views.SofpView.as_view(), name="sofp"),
 ]

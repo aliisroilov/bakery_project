@@ -75,7 +75,13 @@ class EmployeeGroupSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
 
     def get_members_display(self, obj):
-        return [{"id": u.id, "display_name": u.display_name} for u in obj.members.all()]
+        # Only show active members — archived workers must not appear in the
+        # production form's group picker or salary preview.
+        return [
+            {"id": u.id, "display_name": u.display_name}
+            for u in obj.members.all()
+            if not u.is_archived
+        ]
 
     def create(self, validated_data):
         members = validated_data.pop("members", [])

@@ -94,6 +94,32 @@ class IngredientViewSet(viewsets.ModelViewSet):
             )
         return Response(IngredientSerializer(locked).data)
 
+    @action(detail=True, methods=["post"], url_path="set-price")
+    def set_price(self, request, pk=None):
+        """Manually set an ingredient's per-unit price (UZS), overriding the
+        rolling average. Recomputes every product cost that uses this ingredient
+        (feature #24), exactly like a purchase would.
+        """
+        ing = self.get_object()
+        raw = request.data.get("avg_cost_uzs")
+        try:
+            new_price = Decimal(str(raw))
+        except (InvalidOperation, TypeError):
+            return Response(
+                {"detail": "Narx noto'g'ri"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if new_price < 0:
+            return Response(
+                {"detail": "Narx manfiy bo'lishi mumkin emas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            locked = Ingredient.objects.select_for_update().get(pk=ing.pk)
+            locked.avg_cost_uzs = new_price
+            locked.save(update_fields=["avg_cost_uzs"])
+            recalc_products_using_ingredient(locked.id)
+        return Response(IngredientSerializer(locked).data)
+
 
 class PurchaseViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]

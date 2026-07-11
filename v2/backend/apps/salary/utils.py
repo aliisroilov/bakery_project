@@ -23,7 +23,7 @@ def _parse_date(d) -> date | None:
     return datetime.strptime(str(d), "%Y-%m-%d").date()
 
 
-def _production_contributions(user, d_from=None, d_to=None):
+def _production_contributions(user, d_from=None, d_to=None, reset_date=None):
     """Yield (meshok, units, product) credited to *user*.
 
     Both individual productions (nonvoy=user) AND group productions (a group the
@@ -31,8 +31,16 @@ def _production_contributions(user, d_from=None, d_to=None):
     split among group members — every member earns their own salary tariff on the
     whole batch, because the rate already encodes each person's role/pay level
     (e.g. a master baker on 130 000/qop vs a helper on 20 000/qop).
+
+    *reset_date* is a hard lower bound: production before it is never counted
+    (period close / fresh start), so historical runs don't resurface as salary.
     """
     from apps.production.models import Production
+
+    # reset_date wins over d_from when it's later — it's a floor that can't be
+    # crossed even if the caller asks for an earlier date range.
+    if reset_date and (d_from is None or reset_date > d_from):
+        d_from = reset_date
 
     # A run is credited either individually (nonvoy) or to a group — never both.
     # Guarding the group query with nonvoy__isnull=True makes the two sets disjoint
@@ -57,12 +65,12 @@ def _production_contributions(user, d_from=None, d_to=None):
         yield Decimal(p.meshok_count or 0), Decimal(p.unit_count or 0), p.product
 
 
-def _earned_from_production(user, rate_type, rate, d_from=None, d_to=None) -> Decimal:
+def _earned_from_production(user, rate_type, rate, d_from=None, d_to=None, reset_date=None) -> Decimal:
     """Sum a user's production-based earnings (individual + group, full quantity)."""
     from .models import RateType
 
     total = Decimal("0.00")
-    for meshok, units, product in _production_contributions(user, d_from, d_to):
+    for meshok, units, product in _production_contributions(user, d_from, d_to, reset_date):
         if rate_type == RateType.PER_MESHOK:
             total += meshok * rate
         elif rate_type == RateType.PER_UNIT:
@@ -91,6 +99,7 @@ def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Dec
 
     d_from = _parse_date(date_from)
     d_to = _parse_date(date_to)
+    reset = getattr(rate_obj, "reset_date", None)
 
     # No range — delegate to the all-time function
     if d_from is None and d_to is None:
@@ -101,12 +110,17 @@ def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Dec
 
     # ── Production-based rates (individual + group share) ──────────────────────
     if rt in (RateType.PER_MESHOK, RateType.PER_UNIT, RateType.PER_PRODUCT):
-        return _earned_from_production(user, rt, rate, d_from, d_to)
+        return _earned_from_production(user, rt, rate, d_from, d_to, reset)
 
     # ── Time-based rates ──────────────────────────────────────────────────────
     today = date.today()
     effective_from = d_from or today
     effective_to = d_to or today
+    # Apply the reset floor: nothing accrues before it.
+    if reset and reset > effective_from:
+        effective_from = reset
+    if effective_to < effective_from:
+        return Decimal("0.00")  # range is entirely before the reset date
 
     if rt == RateType.PER_WEEK:
         days = max((effective_to - effective_from).days + 1, 0)
@@ -137,15 +151,18 @@ def calculate_earned(user, rate_obj) -> Decimal:
 
     rate = Decimal(rate_obj.rate or 0)
     rt = rate_obj.rate_type
+    reset = getattr(rate_obj, "reset_date", None)
 
     # ── Production-based rates (individual + group share) ──────────────────────
     if rt in (RateType.PER_MESHOK, RateType.PER_UNIT, RateType.PER_PRODUCT):
-        return _earned_from_production(user, rt, rate)
+        return _earned_from_production(user, rt, rate, reset_date=reset)
 
     if rt == RateType.PER_WEEK:
         # Count total days since hire ÷ 7 = fractional weeks accumulated.
         # Using last-payment date caused earned to show 0 for 6 days after each payment.
         start = user.date_joined.date() if hasattr(user, "date_joined") else date.today()
+        if reset and reset > start:
+            start = reset  # nothing accrues before the reset date
         days = max((date.today() - start).days, 0)
         weeks = Decimal(str(days)) / Decimal("7")
         return (weeks * rate).quantize(Decimal("0.01"))
@@ -154,7 +171,11 @@ def calculate_earned(user, rate_obj) -> Decimal:
         # Count total months worked since hire (including current partial month).
         # Returning just `rate` caused remaining to go negative after month 1 was paid.
         start = user.date_joined.date() if hasattr(user, "date_joined") else date.today()
+        if reset and reset > start:
+            start = reset  # nothing accrues before the reset date
         today = date.today()
+        if today < start:
+            return Decimal("0.00")
         months = (today.year - start.year) * 12 + (today.month - start.month) + 1
         return (Decimal(max(months, 1)) * rate).quantize(Decimal("0.01"))
 

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   BarChart3, Download, Search, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown,
-  Copy, ChevronDown, TrendingUp, DollarSign, Package, Warehouse,
+  Copy, ChevronDown, ChevronRight, TrendingUp, DollarSign, Package, Warehouse,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -10,7 +10,7 @@ import {
 import { api } from "../lib/api";
 import { C, TICK, mkTooltip } from "../lib/chart";
 import type { Paginated, Product } from "../lib/types";
-import { formatMoney } from "../lib/utils";
+import { formatMoney, fmtDMY } from "../lib/utils";
 
 type ReportType =
   | "payments"
@@ -33,6 +33,11 @@ interface ReportDef {
   supportsDateRange: boolean;
   moneyCols?: number[];
   currencyCol?: number;
+  // Fixed per-column currency for reports WITHOUT a per-row currencyCol
+  // (e.g. shop_debts has separate UZS and USD columns).
+  colCurrency?: Record<number, "UZS" | "USD">;
+  // Money columns that must NOT be summed in the footer (e.g. loan limits).
+  noTotalCols?: number[];
   allowNegative?: boolean;
   special?: boolean;
 }
@@ -81,6 +86,8 @@ const REPORTS: ReportDef[] = [
     xlsxEndpoint: "/reports/shop-debts.xlsx",
     supportsDateRange: false,
     moneyCols: [2, 3, 4, 5],
+    colCurrency: { 2: "UZS", 3: "UZS", 4: "USD", 5: "USD" },
+    noTotalCols: [3, 5], // loan limits — summing them is meaningless
   },
   {
     type: "production",
@@ -466,7 +473,7 @@ function CosTab() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Xomashyo narxlari omborga so'nggi kiritilgan xarid narxidan olinadi.
+          Xomashyo narxlari Ombor sahifasida qo'lda kiritilgan narxdan olinadi. Tan narxiga nonvoy ish haqi ham qo'shilgan.
         </p>
         <button
           onClick={() => refetch()}
@@ -488,7 +495,7 @@ function CosTab() {
           <div className="rounded-xl border bg-card overflow-hidden">
             <div className="px-5 py-3 border-b font-semibold text-sm flex items-center gap-2">
               <Package className="size-4 text-bakery-500" />
-              Xomashyo narxlari (so'nggi xarid)
+              Xomashyo narxlari (qo'lda kiritilgan)
             </div>
             <div className="overflow-auto max-h-72">
               <table className="w-full text-sm border-separate border-spacing-0">
@@ -496,8 +503,8 @@ function CosTab() {
                   <tr>
                     <th className="sticky top-0 bg-muted px-4 py-2 text-left font-medium border-b">Xomashyo</th>
                     <th className="sticky top-0 bg-muted px-4 py-2 text-left font-medium border-b">Birlik</th>
-                    <th className="sticky top-0 bg-muted px-4 py-2 text-right font-medium border-b">So'nggi narx</th>
-                    <th className="sticky top-0 bg-muted px-4 py-2 text-left font-medium border-b">Xarid sanasi</th>
+                    <th className="sticky top-0 bg-muted px-4 py-2 text-right font-medium border-b">Narx (birlik)</th>
+                    <th className="sticky top-0 bg-muted px-4 py-2 text-left font-medium border-b">Oxirgi xarid</th>
                     <th className="sticky top-0 bg-muted px-4 py-2 text-right font-medium border-b">Stok</th>
                   </tr>
                 </thead>
@@ -507,8 +514,8 @@ function CosTab() {
                       <td className="px-4 py-2">{ing.name}</td>
                       <td className="px-4 py-2 text-muted-foreground">{ing.unit}</td>
                       <td className="px-4 py-2 text-right tabular-nums">
-                        {ing.last_price > 0
-                          ? formatMoney(String(Math.round(ing.last_price)), "UZS")
+                        {ing.price > 0
+                          ? formatMoney(String(Math.round(ing.price)), "UZS")
                           : <span className="text-amber-500 text-xs">Narx yo'q</span>}
                       </td>
                       <td className="px-4 py-2 text-muted-foreground text-xs">{ing.last_date ?? "—"}</td>
@@ -743,6 +750,61 @@ function SofpTab() {
               </div>
             </div>
           </div>
+
+          {/* Liabilities (customer credits) + net worth */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="rounded-xl border bg-card overflow-hidden">
+              <div className="px-5 py-3 border-b font-semibold text-sm flex items-center gap-2">
+                <TrendingUp className="size-4 rotate-180 text-red-500" />
+                Majburiyatlar — do'kon kreditlari
+              </div>
+              {(data.liabilities?.customer_credits?.items as any[] ?? []).length === 0 ? (
+                <div className="px-5 py-8 text-center text-sm text-muted-foreground">Majburiyat yo'q</div>
+              ) : (
+                <div className="divide-y max-h-64 overflow-auto">
+                  {(data.liabilities.customer_credits.items as any[]).map((r, i) => (
+                    <div key={i} className="px-5 py-2.5 flex items-center justify-between text-sm">
+                      <span className="truncate mr-2">{r.name}</span>
+                      <div className="text-right whitespace-nowrap">
+                        {r.uzs > 0 && (
+                          <div className="tabular-nums font-medium">{formatMoney(String(Math.round(r.uzs)), "UZS")}</div>
+                        )}
+                        {r.usd > 0 && (
+                          <div className="tabular-nums text-xs text-muted-foreground">{formatMoney(String(r.usd), "USD")}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="px-5 py-3 flex items-center justify-between text-sm bg-muted/40 font-semibold">
+                    <span>Jami</span>
+                    <div className="text-right">
+                      <div className="tabular-nums">{formatMoney(String(Math.round(data.liabilities.total_uzs)), "UZS")}</div>
+                      {data.liabilities.total_usd > 0 && (
+                        <div className="tabular-nums text-xs text-muted-foreground">{formatMoney(String(data.liabilities.total_usd), "USD")}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="rounded-xl border bg-card p-5 flex flex-col justify-center">
+              <div className="flex items-center gap-2 mb-2">
+                <BarChart3 className="size-4 text-bakery-500" />
+                <span className="text-sm text-muted-foreground">Sof qiymat (aktivlar − majburiyatlar)</span>
+              </div>
+              <div className="text-2xl font-bold tabular-nums">
+                {formatMoney(String(Math.round(data.net_worth_uzs ?? data.total_assets_uzs)), "UZS")}
+              </div>
+              {(data.net_worth_usd ?? 0) !== 0 && (
+                <div className="text-sm font-semibold tabular-nums text-muted-foreground mt-0.5">
+                  {formatMoney(String(data.net_worth_usd), "USD")}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
+                Naqd + do'kon qarzlari + ombor qiymati, do'kon kreditlari ayirilgan holda.
+              </p>
+            </div>
+          </div>
         </>
       )}
     </div>
@@ -827,6 +889,10 @@ function GrossDailyTab() {
               </div>
             </div>
           )}
+
+          <p className="text-xs text-muted-foreground">
+            Tan narxi = materiallar + nonvoy (ishlab chiqarish) ish haqi · Oylik to'lovlar = boshqa xodimlar.
+          </p>
 
           {/* Cross-tab: clients × products */}
           {data.clients.length > 0 ? (
@@ -915,8 +981,8 @@ function GrossDailyTab() {
                     </tr>
                   ))}
                   <tr className="bg-muted font-semibold">
-                    <td className="px-4 py-2.5 border-t" colSpan={3}>Jami tan narxi</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums border-t">{formatMoney(String(Math.round(pnl.cos)), "UZS")}</td>
+                    <td className="px-4 py-2.5 border-t" colSpan={3}>Ishlab chiqarilgan tan narxi jami</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums border-t">{formatMoney(String(Math.round(data.production_cos_total ?? 0)), "UZS")}</td>
                   </tr>
                 </tbody>
               </table>
@@ -945,10 +1011,19 @@ function SummaryCards({ data, type }: { data: ReportData | undefined; type: Repo
     });
   } else {
     if (s.total_uzs !== undefined) {
-      cards.push({ label: "Jami (UZS)", value: formatMoney(String(s.total_uzs), "UZS") });
+      cards.push({
+        label: type === "orders" ? "Buyurtma (UZS)" : "Jami (UZS)",
+        value: formatMoney(String(s.total_uzs), "UZS"),
+      });
     }
     if (s.total_usd !== undefined && s.total_usd > 0) {
       cards.push({ label: "Jami (USD)", value: formatMoney(String(s.total_usd), "USD") });
+    }
+    if (type === "orders") {
+      cards.push({ label: "Yetkazilgan (UZS)", value: formatMoney(String(s.total_delivered_uzs ?? 0), "UZS") });
+      if ((s.total_delivered_usd ?? 0) > 0) {
+        cards.push({ label: "Yetkazilgan (USD)", value: formatMoney(String(s.total_delivered_usd ?? 0), "USD") });
+      }
     }
     if (type === "production") {
       cards.push({ label: "Jami qop", value: String(s.total_meshok ?? 0) });
@@ -984,6 +1059,304 @@ function SummaryCards({ data, type }: { data: ReportData | undefined; type: Repo
   );
 }
 
+// ─── Gross Overall drill-down modal ──────────────────────────────────────────
+// Which gross_overall column maps to which detail metric.
+const GROSS_METRICS: Record<number, { key: string; label: string }> = {
+  1: { key: "sales", label: "Savdo" },
+  2: { key: "cos", label: "Tan narxi" },
+  3: { key: "gross_profit", label: "Yalpi foyda" },
+  4: { key: "expenses", label: "Xarajatlar" },
+  5: { key: "op_profit", label: "Op. foyda" },
+  6: { key: "salary", label: "Oylik" },
+  7: { key: "net_profit", label: "Sof foyda" },
+};
+
+function Money({ v }: { v: number }) {
+  return (
+    <span className={"tabular-nums " + (v < 0 ? "text-red-600 dark:text-red-400" : "")}>
+      {formatMoney(String(Math.round(v)), "UZS")}
+    </span>
+  );
+}
+
+const fm = (v: number) => formatMoney(String(Math.round(v)), "UZS");
+
+function PnlDetailModal({
+  from, to, weekLabel, metricKey, metricLabel, onClose,
+}: {
+  from: string; to: string; weekLabel: string;
+  metricKey: string; metricLabel: string; onClose: () => void;
+}) {
+  const { data, isFetching } = useQuery<any>({
+    queryKey: ["reports", "pnl-detail", from, to],
+    queryFn: async () => (await api.get(`/reports/pnl-detail/?date_from=${from}&date_to=${to}`)).data,
+  });
+
+  // Every waterfall row is expandable — click it to drill into its breakdown
+  // inline. Seed the row the user clicked from the Gross Overall table as open.
+  const [open, setOpen] = useState<Record<string, boolean>>({ [metricKey]: true });
+  const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
+
+  const waterfall = data ? [
+    { key: "sales", label: "Savdo", val: data.sales.total, sum: false },
+    { key: "cos", label: "− Tan narxi", val: -data.cos.total, sum: false },
+    { key: "gross_profit", label: "= Yalpi foyda", val: data.gross_profit, sum: true },
+    { key: "expenses", label: "− Xarajatlar", val: -data.expenses.total, sum: false },
+    { key: "op_profit", label: "= Op. foyda", val: data.op_profit, sum: true },
+    { key: "salary", label: "− Oylik", val: -data.salary.total, sum: false },
+    { key: "net_profit", label: "= Sof foyda", val: data.net_profit, sum: true },
+  ] : [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="bg-card rounded-2xl border shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="px-5 py-4 border-b flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs text-muted-foreground">{weekLabel} · {fmtDMY(from)} → {fmtDMY(to)}</div>
+            <h3 className="font-semibold text-lg flex items-center gap-2">
+              <BarChart3 className="size-5 text-bakery-500" /> {metricLabel}
+            </h3>
+          </div>
+          <button onClick={onClose} className="rounded-lg border px-2 py-1 text-sm hover:bg-muted">✕</button>
+        </header>
+
+        <div className="overflow-auto p-5 space-y-3">
+          {isFetching && !data && <div className="py-10 text-center text-muted-foreground text-sm">Yuklanmoqda…</div>}
+
+          {data && (
+            <>
+              <p className="text-xs text-muted-foreground">Har bir qatorni bosib tafsilotlarini oching.</p>
+              <div className="rounded-xl border overflow-hidden text-sm divide-y">
+                {waterfall.map((r) => {
+                  const isOpen = !!open[r.key];
+                  return (
+                    <div key={r.key} className={r.sum ? "bg-muted/30" : ""}>
+                      <button
+                        onClick={() => toggle(r.key)}
+                        className={
+                          "w-full px-4 py-2.5 flex items-center justify-between gap-2 text-left transition hover:bg-bakery-500/5 " +
+                          (r.key === metricKey ? "bg-bakery-500/10 " : "") +
+                          (r.sum ? "font-semibold" : "font-medium")
+                        }
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <ChevronRight className={"size-4 text-muted-foreground transition-transform " + (isOpen ? "rotate-90" : "")} />
+                          {r.label}
+                        </span>
+                        <Money v={r.val} />
+                      </button>
+                      {isOpen && (
+                        <div className="px-3 pb-3 pt-1 bg-muted/10">
+                          <MetricDetail k={r.key} data={data} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Inline breakdown for one waterfall row. Component rows show their line items;
+// derived rows (gross/op/net) show the formula that produced them.
+function MetricDetail({ k, data }: { k: string; data: any }) {
+  if (k === "sales") {
+    return (
+      <DetailTable
+        title="Mahsulot bo'yicha (yetkazilgan)"
+        head={["Mahsulot", "Miqdor", "Summa"]}
+        rows={data.sales.items.map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.amount} />])}
+        foot={["Jami", "", <Money v={data.sales.total} />]}
+        empty="Savdo yo'q"
+      />
+    );
+  }
+  if (k === "cos") return <CosDetail cos={data.cos} />;
+  if (k === "expenses") {
+    return (
+      <GroupedDetail
+        items={data.expenses.items}
+        total={data.expenses.total}
+        groupKey={(i: any) => i.category}
+        cols={[
+          { render: (i: any) => fmtDMY(i.date) },
+          { render: (i: any) => i.title },
+          { render: (i: any) => <Money v={i.amount} />, align: "right" },
+        ]}
+        empty="Xarajat yo'q"
+      />
+    );
+  }
+  if (k === "salary") {
+    return (
+      <GroupedDetail
+        items={data.salary.items}
+        total={data.salary.total}
+        groupKey={(i: any) => i.user}
+        cols={[
+          { render: (i: any) => fmtDMY(i.date) },
+          { render: (i: any) => i.kind },
+          { render: (i: any) => <Money v={i.amount} />, align: "right" },
+        ]}
+        empty="Oylik to'lovi yo'q"
+      />
+    );
+  }
+  if (k === "gross_profit")
+    return <Formula text={`Yalpi foyda = Savdo − Tan narxi = ${fm(data.sales.total)} − ${fm(data.cos.total)} = ${fm(data.gross_profit)}`} />;
+  if (k === "op_profit")
+    return <Formula text={`Op. foyda = Yalpi foyda − Xarajatlar = ${fm(data.gross_profit)} − ${fm(data.expenses.total)} = ${fm(data.op_profit)}`} />;
+  if (k === "net_profit")
+    return <Formula text={`Sof foyda = Op. foyda − Oylik = ${fm(data.op_profit)} − ${fm(data.salary.total)} = ${fm(data.net_profit)}`} />;
+  return null;
+}
+
+// Tan narxi = materials (recipe cost of goods sold) + nonvoy production wages.
+function CosDetail({ cos }: { cos: any }) {
+  return (
+    <div className="space-y-3">
+      <DetailTable
+        title={`Materiallar — ${fm(cos.materials_total ?? cos.total)}`}
+        head={["Mahsulot", "Miqdor", "Tannarx/dona", "Summa"]}
+        rows={(cos.items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
+        foot={["Jami", "", "", <Money v={cos.materials_total ?? cos.total} />]}
+        empty="Material tannarxi yo'q"
+      />
+      <div>
+        <div className="text-sm font-semibold mb-2">Ishlab chiqarish ish haqi (nonvoy) — {fm(cos.salary_total ?? 0)}</div>
+        <GroupedDetail
+          items={cos.salary_items ?? []}
+          total={cos.salary_total ?? 0}
+          groupKey={(i: any) => i.user}
+          cols={[
+            { render: (i: any) => fmtDMY(i.date) },
+            { render: (i: any) => i.kind },
+            { render: (i: any) => <Money v={i.amount} />, align: "right" },
+          ]}
+          empty="Ishlab chiqarish ish haqi yo'q"
+        />
+      </div>
+    </div>
+  );
+}
+
+// Records grouped by a key (category / employee). Click a group to expand its rows.
+function GroupedDetail({
+  items, total, groupKey, cols, empty,
+}: {
+  items: any[];
+  total: number;
+  groupKey: (i: any) => string;
+  cols: { render: (i: any) => any; align?: "left" | "right" }[];
+  empty?: string;
+}) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  if (!items || items.length === 0)
+    return <div className="rounded-lg border bg-card text-center text-muted-foreground text-sm py-4">{empty ?? "Ma'lumot yo'q"}</div>;
+
+  const groups = new Map<string, { total: number; rows: any[] }>();
+  for (const it of items) {
+    const key = groupKey(it) || "—";
+    const g = groups.get(key) ?? { total: 0, rows: [] };
+    g.total += it.amount;
+    g.rows.push(it);
+    groups.set(key, g);
+  }
+  const sorted = [...groups.entries()].sort((a, b) => Math.abs(b[1].total) - Math.abs(a[1].total));
+
+  return (
+    <div className="rounded-lg border overflow-hidden divide-y bg-card">
+      {sorted.map(([name, g]) => {
+        const isOpen = !!open[name];
+        return (
+          <div key={name}>
+            <button
+              onClick={() => setOpen((o) => ({ ...o, [name]: !o[name] }))}
+              className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-sm hover:bg-muted/40"
+            >
+              <span className="flex items-center gap-1.5 font-medium min-w-0">
+                <ChevronRight className={"size-3.5 shrink-0 text-muted-foreground transition-transform " + (isOpen ? "rotate-90" : "")} />
+                <span className="truncate">{name}</span>
+                <span className="text-xs text-muted-foreground shrink-0">({g.rows.length})</span>
+              </span>
+              <Money v={g.total} />
+            </button>
+            {isOpen && (
+              <div className="overflow-x-auto bg-muted/20">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {g.rows.map((it, ri) => (
+                      <tr key={ri} className="border-t">
+                        {cols.map((c, ci) => (
+                          <td
+                            key={ci}
+                            className={"px-3 py-1.5 " + (c.align === "right" ? "text-right tabular-nums" : "text-left") + (ci === 0 ? " text-muted-foreground whitespace-nowrap tabular-nums" : "")}
+                          >
+                            {c.render(it)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div className="px-3 py-2 flex items-center justify-between bg-muted font-semibold text-sm">
+        <span>Jami</span>
+        <Money v={total} />
+      </div>
+    </div>
+  );
+}
+
+function Formula({ text }: { text: string }) {
+  return <div className="rounded-lg border bg-card p-3 text-sm tabular-nums">{text}</div>;
+}
+
+function DetailTable({
+  title, head, rows, foot, empty,
+}: {
+  title?: string; head: string[]; rows: any[][]; foot?: any[]; empty?: string;
+}) {
+  return (
+    <div>
+      {title && <div className="text-sm font-semibold mb-2">{title}</div>}
+      <div className="rounded-xl border overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-muted text-xs text-muted-foreground">
+            <tr>{head.map((h, i) => <th key={i} className={"px-3 py-2 " + (i === 0 ? "text-left" : "text-right")}>{h}</th>)}</tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr><td colSpan={head.length} className="px-3 py-6 text-center text-muted-foreground">{empty ?? "Ma'lumot yo'q"}</td></tr>
+            ) : rows.map((r, ri) => (
+              <tr key={ri} className="border-t">
+                {r.map((c, ci) => <td key={ci} className={"px-3 py-1.5 " + (ci === 0 ? "text-left" : "text-right")}>{c}</td>)}
+              </tr>
+            ))}
+          </tbody>
+          {foot && rows.length > 0 && (
+            <tfoot className="bg-muted font-semibold">
+              <tr>{foot.map((c, ci) => <td key={ci} className={"px-3 py-2 " + (ci === 0 ? "text-left" : "text-right")}>{c}</td>)}</tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export function ReportsPage() {
   const today = new Date().toISOString().slice(0, 10);
@@ -997,6 +1370,10 @@ export function ReportsPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [pinFirst, setPinFirst] = useState(true);
   const [productFilter, setProductFilter] = useState<number[]>([]);
+  // Gross Overall drill-down modal
+  const [detail, setDetail] = useState<
+    { from: string; to: string; weekLabel: string; metricKey: string; metricLabel: string } | null
+  >(null);
 
   const report = REPORTS.find((r) => r.type === active)!;
 
@@ -1056,12 +1433,25 @@ export function ReportsPage() {
     if (!data || !report.moneyCols?.length) return null;
     // gross_overall already contains week + month total rows — no footer needed
     if (active === "gross_overall") return null;
-    const totals: Record<number, number> = {};
+    // Totals are split per currency so UZS and USD are never added together.
+    const totals: Record<number, { UZS: number; USD: number }> = {};
     for (const col of report.moneyCols) {
-      totals[col] = filteredRows.reduce((s, r) => s + (Number(r[col]) || 0), 0);
+      if (report.noTotalCols?.includes(col)) continue;
+      const acc = { UZS: 0, USD: 0 };
+      for (const r of filteredRows) {
+        const cur = (
+          report.currencyCol != null
+            ? String(r[report.currencyCol])
+            : report.colCurrency?.[col] ?? "UZS"
+        ) as "UZS" | "USD";
+        const v = Number(r[col]) || 0;
+        if (cur === "USD") acc.USD += v;
+        else acc.UZS += v;
+      }
+      totals[col] = acc;
     }
     return totals;
-  }, [data, filteredRows, report.moneyCols, active]);
+  }, [data, filteredRows, report.moneyCols, report.currencyCol, report.colCurrency, report.noTotalCols, active]);
 
   const toggleSort = (col: number) => {
     if (sortCol === col) {
@@ -1216,6 +1606,14 @@ export function ReportsPage() {
 
           <SummaryCards data={data} type={active} />
 
+          {(active === "pnl_daily" || active === "gross_overall") && (
+            <p className="text-xs text-muted-foreground -mt-1">
+              <span className="font-medium text-foreground">Tan narxi</span> = materiallar + nonvoy (ishlab chiqarish) ish haqi ·{" "}
+              <span className="font-medium text-foreground">Oylik</span> = boshqa xodimlar (menejer, haydovchi…).{" "}
+              {active === "gross_overall" && "Har bir raqamni bosib tarkibini oching."}
+            </p>
+          )}
+
           {/* Charts */}
           {active === "production" && filteredRows.length > 1 && (
             <ProductionChart rows={filteredRows} />
@@ -1339,21 +1737,34 @@ export function ReportsPage() {
                           const isMoney = report.moneyCols?.includes(ci);
                           const currency = report.currencyCol != null
                             ? (row[report.currencyCol] as string)
-                            : "UZS";
+                            : (report.colCurrency?.[ci] ?? "UZS");
                           const sticky = pinFirst && ci === 0 ? "sticky left-10 z-[5] bg-inherit" : "";
                           const numVal = Number(cell);
                           const isNeg = isMoney && numVal < 0;
                           const isZero = isMoney && numVal === 0;
 
+                          // Gross Overall: money cells are clickable → detail modal.
+                          const metric = isOverall && isMoney ? GROSS_METRICS[ci] : undefined;
+                          const rangeFrom = row[9] as string | undefined;
+                          const rangeTo = row[10] as string | undefined;
+                          const clickable = !!(metric && rangeFrom && rangeTo);
+
                           return (
                             <td
                               key={ci}
+                              onClick={clickable ? () => setDetail({
+                                from: rangeFrom!, to: rangeTo!,
+                                weekLabel: String(row[0]),
+                                metricKey: metric!.key, metricLabel: metric!.label,
+                              }) : undefined}
                               className={
                                 "border-b px-4 py-2 " +
                                 (isMoney ? "text-right tabular-nums" : "text-left") +
                                 " " + sticky +
-                                (isNeg ? " text-red-600 dark:text-red-400" : "")
+                                (isNeg ? " text-red-600 dark:text-red-400" : "") +
+                                (clickable ? " cursor-pointer hover:bg-bakery-500/10 hover:underline decoration-dotted underline-offset-4" : "")
                               }
+                              title={clickable ? "Tafsilotni ko'rish" : undefined}
                             >
                               {isMoney
                                 ? isZero && !report.allowNegative
@@ -1378,22 +1789,33 @@ export function ReportsPage() {
                       {data?.headers.map((_, ci) => {
                         const isMoney = report.moneyCols?.includes(ci);
                         const sticky = pinFirst && ci === 0 ? "sticky left-10 z-10 bg-muted" : "";
-                        const total = columnTotals[ci] ?? 0;
-                        const isNeg = isMoney && total < 0;
+                        const t = columnTotals[ci];
                         return (
                           <td
                             key={ci}
                             className={
                               "border-t px-4 py-2 " +
                               (isMoney ? "text-right tabular-nums" : "text-left text-muted-foreground text-xs") +
-                              " " + sticky +
-                              (isNeg ? " text-red-600 dark:text-red-400" : "")
+                              " " + sticky
                             }
                           >
                             {isMoney
-                              ? total !== 0
-                                ? formatMoney(String(total), "UZS")
-                                : "—"
+                              ? t
+                                ? (t.UZS === 0 && t.USD === 0
+                                    ? "—"
+                                    : <>
+                                        {t.UZS !== 0 && (
+                                          <div className={t.UZS < 0 ? "text-red-600 dark:text-red-400" : ""}>
+                                            {formatMoney(String(t.UZS), "UZS")}
+                                          </div>
+                                        )}
+                                        {t.USD !== 0 && (
+                                          <div className={"text-xs " + (t.USD < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground")}>
+                                            {formatMoney(String(t.USD), "USD")}
+                                          </div>
+                                        )}
+                                      </>)
+                                : ""
                               : ci === 0
                                 ? "Jami"
                                 : ""}
@@ -1405,13 +1827,24 @@ export function ReportsPage() {
                 )}
               </table>
             </div>
-            {filteredRows.length > 500 && (
+            {filteredRows.length > 600 && (
               <div className="px-5 py-3 border-t text-xs text-muted-foreground text-center">
-                Dastlabki 500 qator ko'rsatilgan · to'liq ma'lumot uchun Excel yuklab oling
+                Jadvalda dastlabki 600 qator ko'rsatilgan (Σ jami — barcha {filteredRows.length} qator bo'yicha) · to'liq ro'yxat uchun Excel yuklab oling
               </div>
             )}
           </div>
         </>
+      )}
+
+      {detail && (
+        <PnlDetailModal
+          from={detail.from}
+          to={detail.to}
+          weekLabel={detail.weekLabel}
+          metricKey={detail.metricKey}
+          metricLabel={detail.metricLabel}
+          onClose={() => setDetail(null)}
+        />
       )}
     </div>
   );

@@ -22,7 +22,10 @@ def make_workbook(sheet_title: str, headers: list[str], rows: list[list]) -> Byt
         cell.alignment = CENTER
 
     for r, row in enumerate(rows, start=2):
-        for c, value in enumerate(row, start=1):
+        # Only write as many columns as there are headers — reports may carry
+        # extra hidden trailing fields (row_type, week date ranges) that must
+        # not leak into the spreadsheet.
+        for c, value in enumerate(row[: len(headers)], start=1):
             ws.cell(row=r, column=c, value=value)
 
     for col in range(1, len(headers) + 1):

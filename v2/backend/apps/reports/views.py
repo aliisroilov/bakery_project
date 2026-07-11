@@ -13,7 +13,7 @@ Special structured endpoints:
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from django.db.models import OuterRef, Subquery, Sum
+from django.db.models import OuterRef, Q, Subquery, Sum
 from django.db.models.functions import TruncDate
 from django.http import HttpResponse
 from django.utils import timezone
@@ -196,7 +196,14 @@ def build_salary(date_from=None, date_to=None):
 
 
 def build_shop_debts():
-    shops = Shop.objects.filter(is_archived=False).select_related("region").order_by("name")
+    # Include archived shops that still carry a balance — archiving a customer
+    # must not erase the money they owe (or that we owe them).
+    shops = (
+        Shop.objects
+        .filter(Q(is_archived=False) | ~Q(loan_balance_uzs=0) | ~Q(loan_balance_usd=0))
+        .select_related("region")
+        .order_by("name")
+    )
     headers = [
         "Do'kon", "Region", "UZS qarz", "UZS limit",
         "USD qarz", "USD limit", "Oshgan?",
@@ -212,10 +219,12 @@ def build_shop_debts():
             over = True
         if over:
             over_count += 1
-        total_uzs_debt += _dec(s.loan_balance_uzs)
-        total_usd_debt += _dec(s.loan_balance_usd)
+        # Only positive balances are debt; a negative balance is a customer
+        # credit (we owe them) and must not reduce the total owed to us.
+        total_uzs_debt += max(0.0, _dec(s.loan_balance_uzs))
+        total_usd_debt += max(0.0, _dec(s.loan_balance_usd))
         rows.append([
-            s.name,
+            s.name + (" (arxiv)" if s.is_archived else ""),
             s.region.name if s.region_id else "",
             _dec(s.loan_balance_uzs),
             _dec(s.loan_limit_uzs),
@@ -232,7 +241,14 @@ def build_shop_debts():
 
 
 def build_orders(date_from=None, date_to=None):
-    qs = Order.objects.select_related("shop").prefetch_related("items").order_by("-order_date")
+    # Cancelled orders are voided — exclude them from the report and its totals.
+    qs = (
+        Order.objects
+        .exclude(status="cancelled")
+        .select_related("shop")
+        .prefetch_related("items")
+        .order_by("-order_date")
+    )
     if date_from:
         qs = qs.filter(order_date__gte=date_from)
     if date_to:
@@ -244,13 +260,16 @@ def build_orders(date_from=None, date_to=None):
     ]
     rows = []
     total_uzs = total_usd = 0.0
+    deliv_uzs = deliv_usd = 0.0
     for o in qs:
         total = sum((i.total_price for i in o.items.all()), Decimal("0"))
         delivered = sum((i.delivered_price for i in o.items.all()), Decimal("0"))
         if o.currency == "UZS":
             total_uzs += float(total)
+            deliv_uzs += float(delivered)
         else:
             total_usd += float(total)
+            deliv_usd += float(delivered)
         rows.append([
             o.order_date.strftime("%Y-%m-%d"),
             o.shop.name,
@@ -260,25 +279,128 @@ def build_orders(date_from=None, date_to=None):
             float(total),
             float(delivered),
         ])
-    return headers, rows, {"total_uzs": total_uzs, "total_usd": total_usd, "count": len(rows)}
+    # "Jami summa" = ordered value (order intake); "Yetkazilgan" = delivered
+    # value (the real sales figure). Both are surfaced so neither is mistaken
+    # for the other.
+    return headers, rows, {
+        "total_uzs": total_uzs, "total_usd": total_usd,
+        "total_delivered_uzs": deliv_uzs, "total_delivered_usd": deliv_usd,
+        "count": len(rows),
+    }
 
 
 # ─────────────────── COS helpers ───────────────────
 
 def _build_price_map() -> dict:
-    """Return {ingredient_id: last_unit_price_float} built in a single DB query."""
-    last_price_sub = (
-        Purchase.objects
-        .filter(ingredient=OuterRef("pk"))
-        .order_by("-occurred_at")
-        .values("unit_price")[:1]
+    """Return {ingredient_id: unit_price_float}.
+
+    Price source is Ingredient.avg_cost_uzs — the per-unit price entered by hand
+    on the Ombor (inventory) page ("Narx (1 birlik)", set via the set-price
+    action). This is the authoritative cost used across ALL reports (COS,
+    inventory valuation, P&L). We deliberately do NOT use the last purchase
+    price: it can be a stray/adjustment value (e.g. a 1 UZS correction) and is
+    currency-blind, which silently corrupts every downstream number.
+    """
+    rows = Ingredient.objects.values("id", "avg_cost_uzs")
+    return {r["id"]: float(r["avg_cost_uzs"] or 0) for r in rows}
+
+
+def _build_labour_map(days: int = 90) -> dict:
+    """Return {product_id: production_labour_per_meshok_float}.
+
+    Ish haqi (nonvoy) per meshok = the per-meshok wage of the product's PRIMARY
+    producer — the group (or baker) that actually makes most of that product over
+    the window. This is the standard/canonical labour cost, so the figure is the
+    clean group rate (e.g. Sushka group = 98 000/qop, Non group = 180 000/qop)
+    rather than a volume-weighted average that gets diluted (and turned into an
+    odd fraction) by the occasional one-off run by a different baker.
+
+    Per-producer per-meshok wage, mirroring the salary app's
+    _earned_from_production:
+      - per_meshok baker → rate per meshok
+      - per_unit baker   → rate × units produced (÷ meshoks)
+      - per_product      → Product.production_salary_per_unit_uzs × units
+      - group run        → sum of each member's production wage (every member
+                           earns their full tariff on the batch)
+      - time-based (per_week / fixed_monthly) bakers contribute 0 to unit COS
+        (their pay is period overhead, not per-meshok direct labour)
+
+    Runs with no baker AND no group are skipped (unknown labour). A product with
+    no attributed runs in the window is absent from the map, and
+    _compute_product_cos falls back to the per-product manual rate.
+    """
+    from datetime import timedelta
+
+    from apps.salary.models import RateType, SalaryRate
+    from apps.users.models import EmployeeGroup
+
+    rates = {r.user_id: (r.rate_type, float(r.rate or 0)) for r in SalaryRate.objects.all()}
+    group_members = {
+        g.id: list(g.members.values_list("id", flat=True))
+        for g in EmployeeGroup.objects.prefetch_related("members")
+    }
+
+    def _unit_labour(rate_type, rate, meshok, units, psu):
+        if rate_type == RateType.PER_MESHOK:
+            return meshok * rate
+        if rate_type == RateType.PER_UNIT:
+            return units * rate
+        if rate_type == RateType.PER_PRODUCT:
+            return units * psu
+        return 0.0  # time-based rates are not per-meshok direct labour
+
+    cutoff = timezone.localdate() - timedelta(days=days)
+    # product_id → { producer_key: [labour_sum, meshok_sum] }
+    by_producer: dict = {}
+    runs = (
+        Production.objects
+        .filter(occurred_at__date__gte=cutoff)
+        .values(
+            "product_id", "nonvoy_id", "group_id", "meshok_count", "unit_count",
+            "product__production_salary_per_unit_uzs",
+        )
     )
-    rows = Ingredient.objects.annotate(last_price=Subquery(last_price_sub)).values("id", "last_price")
-    return {r["id"]: float(r["last_price"] or 0) for r in rows}
+    for r in runs:
+        meshok = float(r["meshok_count"] or 0)
+        units = float(r["unit_count"] or 0)
+        psu = float(r["product__production_salary_per_unit_uzs"] or 0)
+        if r["nonvoy_id"] and r["nonvoy_id"] in rates:
+            key = ("n", r["nonvoy_id"])
+            rt, rate = rates[r["nonvoy_id"]]
+            labour = _unit_labour(rt, rate, meshok, units, psu)
+        elif r["group_id"]:
+            key = ("g", r["group_id"])
+            labour = sum(
+                _unit_labour(*rates[uid], meshok, units, psu)
+                for uid in group_members.get(r["group_id"], [])
+                if uid in rates
+            )
+        else:
+            continue  # unattributed run — unknown labour
+        prod = by_producer.setdefault(r["product_id"], {})
+        acc = prod.setdefault(key, [0.0, 0.0])
+        acc[0] += labour
+        acc[1] += meshok
+
+    labour_map = {}
+    for pid, producers in by_producer.items():
+        # Primary producer = the one who baked the most meshoks of this product.
+        labour_sum, meshok_sum = max(producers.values(), key=lambda v: v[1])
+        if meshok_sum:
+            labour_map[pid] = round(labour_sum / meshok_sum, 2)
+    return labour_map
 
 
-def _compute_product_cos(product, price_map: dict) -> dict:
-    """COS per meshok for a product using last purchase prices."""
+def _compute_product_cos(product, price_map: dict, labour_map: dict | None = None) -> dict:
+    """Full unit cost (tan narxi) per meshok for a product.
+
+    Ingredients are valued at the manual Ombor price (price_map). Labour (ish
+    haqi) per meshok comes from labour_map (actual production wages), falling
+    back to the per-product manual rate when the product has no recent
+    attributed production. Returns both the full cost (ingredients + labour, for
+    the COS/pricing tab) and the ingredient-only unit cost (for P&L material
+    cost of goods sold, where wages live in the salary expense line).
+    """
     ing_rows = []
     ing_total = 0.0
     missing_prices = []
@@ -302,9 +424,14 @@ def _compute_product_cos(product, price_map: dict) -> dict:
         })
 
     meshok_size = float(product.meshok_size or 160)
-    labour = float(product.production_salary_per_unit_uzs) * meshok_size
+    # Labour per meshok: prefer the data-driven map; else the manual per-unit rate.
+    if labour_map is not None and product.id in labour_map:
+        labour = round(labour_map[product.id], 2)
+    else:
+        labour = round(float(product.production_salary_per_unit_uzs) * meshok_size, 2)
     cos = round(ing_total + labour, 2)
     sale_price = float(product.default_price_uzs)
+    ingredient_per_unit = round(ing_total / meshok_size, 2) if meshok_size else 0.0
     cos_per_unit = round(cos / meshok_size, 2) if meshok_size else 0.0
     margin = round(sale_price - cos_per_unit, 2)
 
@@ -318,6 +445,7 @@ def _compute_product_cos(product, price_map: dict) -> dict:
         "labour": labour,
         "cos_per_meshok": cos,
         "cos_per_unit": cos_per_unit,
+        "ingredient_per_unit": ingredient_per_unit,
         "margin_per_unit": margin,
         "margin_pct": (margin / sale_price * 100) if sale_price else 0.0,
         "missing_prices": missing_prices,
@@ -327,35 +455,45 @@ def _compute_product_cos(product, price_map: dict) -> dict:
 # ─────────────────── Daily P&L builder ───────────────────
 
 def _collect_pnl_data(start, end, tz):
-    """Shared data collection for pnl_daily and gross_overall.
+    """Accrual-matched P&L inputs for pnl_daily and gross_overall.
 
-    Cost of sales is cash-basis: the actual UZS spent buying ingredients in the
-    period (matching the dashboard's cash-basis "net income today"), not a
-    production-derived theoretical cost.
+    Revenue = net delivered value (delivered − returned) at the locked unit
+        price, bucketed by order date. Cancelled orders excluded.
+    Cost of sales = MATERIAL recipe cost of those delivered units, ingredients
+        valued at the Ombor manual price (avg_cost_uzs). This matches revenue on
+        an accrual basis (cost of what was actually sold), unlike the old
+        cash-basis "ingredients bought this day" which swung wildly with
+        purchase timing. Returned as the material component only; callers add the
+        nonvoy production wage bucket below to get the displayed Tan narxi.
+    Salary is split into two buckets, both EXCLUDING advances (a prepayment /
+        employee receivable, not a period expense) and with deductions subtracted:
+        - prod_sal: nonvoy (baker) wages = direct production labour, folded into
+          Tan narxi so gross profit reflects the true cost of making the goods.
+        - other_sal: all other roles = period overhead, kept on the Oylik line.
     """
-    # Cash-basis cost of goods: actual ingredient purchase outflow per day.
-    pur_qs = (
-        Purchase.objects
-        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
-        .annotate(d=TruncDate("occurred_at", tzinfo=tz))
-        .values("d")
-        .annotate(total=Sum("total_price"))
-    )
-    cos_by_date = {r["d"]: float(r["total"] or 0) for r in pur_qs}
+    # Ingredient (material) cost per unit for every product, at the manual price.
+    price_map = _build_price_map()
+    ing_per_unit = {
+        p.id: _compute_product_cos(p, price_map)["ingredient_per_unit"]
+        for p in Product.objects.prefetch_related("recipe_items__ingredient__unit")
+    }
 
-    # Revenue = net delivered (delivered_qty - returned_qty).
-    # Using ordered quantity inflates P&L with pending/cancelled orders.
+    # Revenue + material COGS from net-delivered order items (accrual, matched).
     items_qs = (
         OrderItem.objects
         .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
         .exclude(order__status="cancelled")
-        .values("order__order_date", "unit_price", "delivered_quantity", "returned_quantity")
+        .values("order__order_date", "product_id", "unit_price", "delivered_quantity", "returned_quantity")
     )
     sales_by_date: dict = {}
+    cos_by_date: dict = {}
     for item in items_qs:
-        d = item["order__order_date"]
         net = max(0, item["delivered_quantity"] - item["returned_quantity"])
+        if net == 0:
+            continue
+        d = item["order__order_date"]
         sales_by_date[d] = sales_by_date.get(d, 0.0) + float(item["unit_price"]) * net
+        cos_by_date[d] = cos_by_date.get(d, 0.0) + ing_per_unit.get(item["product_id"], 0.0) * net
 
     exp_qs = (
         GeneralExpense.objects
@@ -366,30 +504,47 @@ def _collect_pnl_data(start, end, tz):
     )
     exp_by_date = {r["d"]: float(r["total"] or 0) for r in exp_qs}
 
-    sal_qs = (
+    # Salary line: real labour cost. Advances are prepayments (excluded);
+    # deductions reduce the expense (subtracted). Split by role: NONVOY (baker)
+    # wages are DIRECT PRODUCTION labour, so they fold into Tan narxi (cost of
+    # goods) — matching the standalone Tan narxi report, which already prices in
+    # nonvoy pay. Every other role (manager, driver, accountant) is period
+    # overhead and stays on the separate Oylik line. Each payment lands in
+    # exactly one bucket, so nothing is double-counted and Sof foyda is unchanged.
+    sal_rows = (
         SalaryPayment.objects
         .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+        .exclude(kind="advance")
         .annotate(d=TruncDate("occurred_at", tzinfo=tz))
-        .values("d")
+        .values("d", "kind", "user__role")
         .annotate(total=Sum("amount"))
     )
-    sal_by_date = {r["d"]: float(r["total"] or 0) for r in sal_qs}
+    prod_sal_by_date: dict = {}   # nonvoy → Tan narxi (cost of goods)
+    other_sal_by_date: dict = {}  # everyone else → Oylik line
+    for r in sal_rows:
+        amt = float(r["total"] or 0)
+        if r["kind"] == "deduction":
+            amt = -amt
+        bucket = prod_sal_by_date if r["user__role"] == "nonvoy" else other_sal_by_date
+        bucket[r["d"]] = bucket.get(r["d"], 0.0) + amt
 
     # Build per-day tuples for all days in range that have activity
     day_data = []
-    t = dict(sales=0.0, cos=0.0, exp=0.0, sal=0.0)
+    t = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, other_sal=0.0)
     current = start
     while current <= end:
         sales = sales_by_date.get(current, 0.0)
         cos = cos_by_date.get(current, 0.0)
         exp = exp_by_date.get(current, 0.0)
-        sal = sal_by_date.get(current, 0.0)
-        if sales or cos or exp or sal:
-            day_data.append((current, sales, cos, exp, sal))
+        prod_sal = prod_sal_by_date.get(current, 0.0)
+        other_sal = other_sal_by_date.get(current, 0.0)
+        if sales or cos or exp or prod_sal or other_sal:
+            day_data.append((current, sales, cos, exp, prod_sal, other_sal))
         t["sales"] += sales
         t["cos"] += cos
         t["exp"] += exp
-        t["sal"] += sal
+        t["prod_sal"] += prod_sal
+        t["other_sal"] += other_sal
         current += timedelta(days=1)
 
     return day_data, t
@@ -406,18 +561,20 @@ def build_pnl_daily(date_from=None, date_to=None):
 
     headers = ["Sana", "Savdo", "Tan narxi", "Yalpi foyda", "Xarajatlar", "Op. foyda", "Oylik", "Sof foyda"]
     rows = []
-    for d, sales, cos, exp, sal in day_data:
+    for d, sales, mat_cos, exp, prod_sal, other_sal in day_data:
+        cos = mat_cos + prod_sal          # Tan narxi = materials + nonvoy (production) pay
         gp = sales - cos
         op = gp - exp
-        np_v = op - sal
-        rows.append([d.strftime("%Y-%m-%d"), sales, cos, gp, exp, op, sal, np_v])
+        np_v = op - other_sal
+        rows.append([d.strftime("%Y-%m-%d"), sales, cos, gp, exp, op, other_sal, np_v])
 
-    gp_t = t["sales"] - t["cos"]
+    cos_t = t["cos"] + t["prod_sal"]
+    gp_t = t["sales"] - cos_t
     op_t = gp_t - t["exp"]
-    np_t = op_t - t["sal"]
+    np_t = op_t - t["other_sal"]
     return headers, rows, {
-        "total_sales": t["sales"], "total_cos": t["cos"],
-        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["sal"],
+        "total_sales": t["sales"], "total_cos": cos_t,
+        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["other_sal"],
         "total_net_profit": np_t, "count": len(rows),
     }
 
@@ -428,9 +585,11 @@ def build_gross_overall(date_from=None, date_to=None):
     Deliberately different from build_pnl_daily (which shows every day):
     this gives a compact week-by-week overview suitable for management review.
 
-    Rows have 9 elements: [label, sales, cos, gp, expenses, op_profit, salary, net, row_type]
-    row_type: 1=week_row, 2=period_total
-    Column order matches Excel: GP → Expenses → Op.profit → Salary → Net
+    Rows have 11 elements: [label, sales, cos, gp, expenses, op_profit, salary,
+    net, row_type, range_start_iso, range_end_iso]
+    row_type: 1=week_row, 2=period_total. The trailing date range powers the
+    frontend drill-down (click a cell → detail for that week). Columns beyond the
+    8 headers are hidden in the table and stripped from the Excel export.
     """
     today = timezone.localdate()
     start = datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else today.replace(day=1)
@@ -444,19 +603,21 @@ def build_gross_overall(date_from=None, date_to=None):
 
     # Aggregate by ISO week — emit one summary row per week
     current_week = None
-    w = dict(sales=0.0, cos=0.0, exp=0.0, sal=0.0)
+    w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, other_sal=0.0)
     week_num = 0
     week_first_day = None
 
     def _flush_week(wn, first_day, last_day, w):
-        wgp = w["sales"] - w["cos"]
+        cos = w["cos"] + w["prod_sal"]          # Tan narxi = materials + nonvoy pay
+        wgp = w["sales"] - cos
         wop = wgp - w["exp"]
-        wnet = wop - w["sal"]
+        wnet = wop - w["other_sal"]
         label = f"Hafta {wn}  ({first_day.strftime('%-d %b')} – {last_day.strftime('%-d %b')})"
-        return [label, w["sales"], w["cos"], wgp, w["exp"], wop, w["sal"], wnet, 1]
+        return [label, w["sales"], cos, wgp, w["exp"], wop, w["other_sal"], wnet, 1,
+                first_day.isoformat(), last_day.isoformat()]
 
     last_day_seen = None
-    for d, sales, cos, exp, sal in day_data:
+    for d, sales, mat_cos, exp, prod_sal, other_sal in day_data:
         iso_week = d.isocalendar()[:2]  # (year, week_number)
 
         if current_week is None:
@@ -468,9 +629,10 @@ def build_gross_overall(date_from=None, date_to=None):
             current_week = iso_week
             week_num += 1
             week_first_day = d
-            w = dict(sales=0.0, cos=0.0, exp=0.0, sal=0.0)
+            w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, other_sal=0.0)
 
-        w["sales"] += sales; w["cos"] += cos; w["exp"] += exp; w["sal"] += sal
+        w["sales"] += sales; w["cos"] += mat_cos; w["exp"] += exp
+        w["prod_sal"] += prod_sal; w["other_sal"] += other_sal
         last_day_seen = d
 
     # Final week
@@ -478,16 +640,18 @@ def build_gross_overall(date_from=None, date_to=None):
         rows.append(_flush_week(week_num, week_first_day, last_day_seen, w))
 
     # Period total — label adapts to range span
-    gp_t = t["sales"] - t["cos"]
+    cos_t = t["cos"] + t["prod_sal"]
+    gp_t = t["sales"] - cos_t
     op_t = gp_t - t["exp"]
-    np_t = op_t - t["sal"]
+    np_t = op_t - t["other_sal"]
     is_single_month = (start.year == end.year and start.month == end.month)
     total_label = "Oy jami" if is_single_month else f"Jami ({start.strftime('%d %b')} – {end.strftime('%d %b')})"
-    rows.append([total_label, t["sales"], t["cos"], gp_t, t["exp"], op_t, t["sal"], np_t, 2])
+    rows.append([total_label, t["sales"], cos_t, gp_t, t["exp"], op_t, t["other_sal"], np_t, 2,
+                 start.isoformat(), end.isoformat()])
 
     return headers, rows, {
-        "total_sales": t["sales"], "total_cos": t["cos"],
-        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["sal"],
+        "total_sales": t["sales"], "total_cos": cos_t,
+        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["other_sal"],
         "total_net_profit": np_t, "count": len([r for r in rows if r[8] == 1]),
     }
 
@@ -615,6 +779,16 @@ class GrossDailyView(APIView):
         except ValueError:
             return Response({"detail": "Invalid date format. Use YYYY-MM-DD."}, status=400)
 
+        # ── Cost maps (shared by cost-of-sales + production table) ──────────
+        price_map = _build_price_map()
+        labour_map = _build_labour_map()
+        product_objs = (
+            Product.objects
+            .filter(is_archived=False)
+            .prefetch_related("recipe_items__ingredient__unit")
+        )
+        cos_map = {p.id: _compute_product_cos(p, price_map, labour_map) for p in product_objs}
+
         # ── Order items for this date (only delivered, excluding cancelled) ──
         items = (
             OrderItem.objects
@@ -627,6 +801,7 @@ class GrossDailyView(APIView):
         # Build products list and client × product matrix
         products_map = {}   # product_id → {"id", "name"}
         shops_map = {}      # shop_id → {"shop", "cells": {product_id: {qty, price, total}}, "total"}
+        cost_of_sales = 0.0  # material recipe cost of goods delivered today
 
         for item in items:
             pid = item.product_id
@@ -646,6 +821,7 @@ class GrossDailyView(APIView):
             qty = net_qty
             price = float(item.unit_price)
             total = qty * price
+            cost_of_sales += cos_map.get(pid, {}).get("ingredient_per_unit", 0.0) * net_qty
 
             if pid in shops_map[sid]["cells"]:
                 shops_map[sid]["cells"][pid]["qty"] += qty
@@ -676,14 +852,6 @@ class GrossDailyView(APIView):
         column_totals = [col_totals.get(p["id"], {"qty": 0, "total": 0.0}) for p in products_list]
 
         # ── Production batches for this day ───────────────────────────────
-        price_map = _build_price_map()
-        product_objs = (
-            Product.objects
-            .filter(is_archived=False)
-            .prefetch_related("recipe_items__ingredient__unit")
-        )
-        cos_map = {p.id: _compute_product_cos(p, price_map) for p in product_objs}
-
         prod_qs = (
             Production.objects
             .filter(occurred_at__date=date)
@@ -692,15 +860,19 @@ class GrossDailyView(APIView):
             .annotate(total_meshoks=Sum("meshok_count"))
             .order_by("product__sort_order", "product__name")
         )
+        # Production table shows cost of goods PRODUCED (full tan narxi incl.
+        # labour). Its total is a separate figure from the P&L cost of goods
+        # SOLD below — the two measure different things, but each is internally
+        # consistent (rows sum to their own total).
         production = []
-        total_cos = 0.0
+        production_cos_total = 0.0
         for pr in prod_qs:
             pid = pr["product_id"]
             meshoks = float(pr["total_meshoks"] or 0)
             cos_info = cos_map.get(pid, {})
             cos_per_meshok = cos_info.get("cos_per_meshok", 0.0)
             cos_total = meshoks * cos_per_meshok
-            total_cos += cos_total
+            production_cos_total += cos_total
             production.append({
                 "product": pr["product__name"],
                 "meshoks": meshoks,
@@ -714,24 +886,33 @@ class GrossDailyView(APIView):
             .filter(occurred_at__date=date, currency="UZS")
             .aggregate(t=Sum("amount"))["t"] or 0
         )
-        sal_total = float(
+        # Salary: exclude advances (prepayments); subtract deductions. Split by
+        # role — nonvoy (production) pay folds into Tan narxi below; the rest is
+        # the Oylik line — mirroring the P&L tables.
+        prod_sal_total = 0.0
+        other_sal_total = 0.0
+        for r in (
             SalaryPayment.objects
             .filter(occurred_at__date=date, currency="UZS")
-            .aggregate(t=Sum("amount"))["t"] or 0
-        )
+            .exclude(kind="advance")
+            .values("kind", "user__role")
+            .annotate(t=Sum("amount"))
+        ):
+            amt = float(r["t"] or 0)
+            if r["kind"] == "deduction":
+                amt = -amt
+            if r["user__role"] == "nonvoy":
+                prod_sal_total += amt
+            else:
+                other_sal_total += amt
 
-        # Cash-basis cost of sales: actual ingredient purchase outflow this day.
-        # (The `production` table above still shows theoretical per-product cost
-        # as context, but the P&L is cash-basis to match the daily P&L report.)
-        cash_cos = float(
-            Purchase.objects
-            .filter(occurred_at__date=date, currency="UZS")
-            .aggregate(t=Sum("total_price"))["t"] or 0
-        )
-
-        gp = grand_total_sales - cash_cos
+        # Tan narxi = MATERIAL recipe cost of goods delivered today (accrual,
+        # matched to sales) PLUS today's nonvoy (production) wages — the direct
+        # cost of making the goods. Remaining wages sit on the Oylik line below.
+        cos_display = cost_of_sales + prod_sal_total
+        gp = grand_total_sales - cos_display
         op = gp - exp_total
-        net = op - sal_total
+        net = op - other_sal_total
 
         return Response({
             "date": date.isoformat(),
@@ -740,15 +921,142 @@ class GrossDailyView(APIView):
             "column_totals": column_totals,
             "grand_total_sales": grand_total_sales,
             "production": production,
+            "production_cos_total": production_cos_total,
             "pnl": {
                 "sales": grand_total_sales,
-                "cos": cash_cos,
+                "cos": cos_display,
+                "cos_materials": cost_of_sales,
+                "production_salary": prod_sal_total,
                 "gross_profit": gp,
                 "expenses": exp_total,
-                "salary": sal_total,
+                "salary": other_sal_total,
                 "op_profit": op,
                 "net_profit": net,
             },
+        })
+
+
+# ────────────────── P&L detail (drill-down) endpoint ──────────────────
+class PnlDetailView(APIView):
+    """GET /reports/pnl-detail/?date_from=&date_to=
+
+    Line-item breakdown of every P&L metric for a date range — powers the Gross
+    Overall drill-down (click a cell → see exactly what makes up that number).
+    Uses the same accrual basis as the P&L: material COGS on net-delivered goods,
+    salary excluding advances with deductions subtracted.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        if not date_from or not date_to:
+            return Response({"detail": "date_from and date_to are required."}, status=400)
+        try:
+            start = datetime.strptime(date_from, "%Y-%m-%d").date()
+            end = datetime.strptime(date_to, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"detail": "Invalid date. Use YYYY-MM-DD."}, status=400)
+
+        price_map = _build_price_map()
+        ing_per_unit, names = {}, {}
+        for p in Product.objects.prefetch_related("recipe_items__ingredient__unit"):
+            ing_per_unit[p.id] = _compute_product_cos(p, price_map)["ingredient_per_unit"]
+            names[p.id] = p.name
+
+        # Sales + material COGS by product (net delivered, cancelled excluded).
+        items = (
+            OrderItem.objects
+            .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
+            .exclude(order__status="cancelled")
+            .values("product_id", "unit_price", "delivered_quantity", "returned_quantity")
+        )
+        sales_by_p, cos_by_p, qty_by_p = {}, {}, {}
+        for it in items:
+            net = max(0, it["delivered_quantity"] - it["returned_quantity"])
+            if net == 0:
+                continue
+            pid = it["product_id"]
+            sales_by_p[pid] = sales_by_p.get(pid, 0.0) + float(it["unit_price"]) * net
+            cos_by_p[pid] = cos_by_p.get(pid, 0.0) + ing_per_unit.get(pid, 0.0) * net
+            qty_by_p[pid] = qty_by_p.get(pid, 0) + net
+        sales_items = sorted(
+            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid], "amount": sales_by_p[pid]}
+             for pid in sales_by_p],
+            key=lambda x: -x["amount"],
+        )
+        cos_items = sorted(
+            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid],
+              "unit_cost": ing_per_unit.get(pid, 0.0), "amount": cos_by_p[pid]}
+             for pid in cos_by_p],
+            key=lambda x: -x["amount"],
+        )
+        total_sales = sum(sales_by_p.values())
+        total_cos = sum(cos_by_p.values())
+
+        # Expenses — line items.
+        exp_qs = (
+            GeneralExpense.objects
+            .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+            .select_related("category").order_by("-occurred_at")
+        )
+        exp_items = [{
+            "date": timezone.localtime(e.occurred_at).strftime("%Y-%m-%d"),
+            "title": e.title,
+            "category": e.category.name if e.category_id else "—",
+            "amount": _dec(e.amount),
+        } for e in exp_qs]
+        total_exp = sum(i["amount"] for i in exp_items)
+
+        # Salary — line items (advances excluded, deductions subtracted). Split by
+        # role, mirroring _collect_pnl_data so the modal reconciles with the
+        # tables: nonvoy (production) pay folds into Tan narxi (cost of goods),
+        # every other role stays on the Oylik line.
+        sal_qs = (
+            SalaryPayment.objects
+            .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+            .exclude(kind="advance").select_related("user").order_by("-occurred_at")
+        )
+        prod_sal_items, other_sal_items = [], []
+        total_prod_sal = 0.0
+        total_other_sal = 0.0
+        for s in sal_qs:
+            amt = _dec(s.amount)
+            if s.kind == "deduction":
+                amt = -amt
+            row = {
+                "date": timezone.localtime(s.occurred_at).strftime("%Y-%m-%d"),
+                "user": s.user.display_name,
+                "kind": s.get_kind_display(),
+                "amount": amt,
+            }
+            if s.user.role == "nonvoy":
+                total_prod_sal += amt
+                prod_sal_items.append(row)
+            else:
+                total_other_sal += amt
+                other_sal_items.append(row)
+
+        tan = total_cos + total_prod_sal          # Tan narxi = materials + production pay
+        gp = total_sales - tan
+        op = gp - total_exp
+        net = op - total_other_sal
+        return Response({
+            "date_from": start.isoformat(),
+            "date_to": end.isoformat(),
+            "sales": {"total": total_sales, "items": sales_items},
+            "cos": {
+                "total": tan,
+                "materials_total": total_cos,
+                "items": cos_items,
+                "salary_total": total_prod_sal,
+                "salary_items": prod_sal_items,
+            },
+            "expenses": {"total": total_exp, "items": exp_items},
+            "salary": {"total": total_other_sal, "items": other_sal_items},
+            "gross_profit": gp,
+            "op_profit": op,
+            "net_profit": net,
         })
 
 
@@ -760,13 +1068,10 @@ class CosBreakdownView(APIView):
 
     def get(self, request):
         price_map = _build_price_map()
+        labour_map = _build_labour_map()
 
-        last_price_sub = (
-            Purchase.objects
-            .filter(ingredient=OuterRef("pk"))
-            .order_by("-occurred_at")
-            .values("unit_price")[:1]
-        )
+        # Reference table shows the price actually used in costing — the manual
+        # Ombor price (avg_cost_uzs) — plus the last purchase date for context.
         last_date_sub = (
             Purchase.objects
             .filter(ingredient=OuterRef("pk"))
@@ -777,7 +1082,7 @@ class CosBreakdownView(APIView):
             Ingredient.objects
             .filter(is_archived=False)
             .select_related("unit")
-            .annotate(last_price=Subquery(last_price_sub), last_date=Subquery(last_date_sub))
+            .annotate(last_date=Subquery(last_date_sub))
             .order_by("name")
         )
         ingredient_prices = [
@@ -786,7 +1091,7 @@ class CosBreakdownView(APIView):
                 "name": ing.name,
                 "unit": ing.unit.short,
                 "stock": float(ing.quantity),
-                "last_price": float(ing.last_price or 0),
+                "price": float(ing.avg_cost_uzs or 0),
                 "last_date": ing.last_date.date().isoformat() if ing.last_date else None,
             }
             for ing in ingredients
@@ -800,7 +1105,7 @@ class CosBreakdownView(APIView):
         )
         return Response({
             "ingredient_prices": ingredient_prices,
-            "products": [_compute_product_cos(p, price_map) for p in products],
+            "products": [_compute_product_cos(p, price_map, labour_map) for p in products],
         })
 
 
@@ -822,17 +1127,33 @@ class SofpView(APIView):
         total_cash_uzs = sum(float(a.balance_uzs) for a in accounts)
         total_cash_usd = sum(float(a.balance_usd) for a in accounts)
 
-        # Receivables — outstanding shop debts (UZS and USD kept separate)
-        shops = Shop.objects.filter(is_archived=False).order_by("name")
-        recv_items = [
-            {"name": s.name, "uzs": float(s.loan_balance_uzs), "usd": float(s.loan_balance_usd)}
-            for s in shops
-            if s.loan_balance_uzs > 0 or s.loan_balance_usd > 0
-        ]
-        total_recv_uzs = sum(float(s.loan_balance_uzs) for s in shops)
-        total_recv_usd = sum(float(s.loan_balance_usd) for s in shops)
+        # Receivables (asset) = shops that OWE us (positive balance). Credits
+        # (negative balance = we owe the shop) are a liability, shown separately
+        # so items always reconcile to the total. Archived shops with a balance
+        # are included — archiving must not erase money owed.
+        shops = (
+            Shop.objects
+            .filter(Q(is_archived=False) | ~Q(loan_balance_uzs=0) | ~Q(loan_balance_usd=0))
+            .order_by("name")
+        )
+        recv_items = []
+        credit_items = []  # customer prepayments / credits (liabilities)
+        total_recv_uzs = total_recv_usd = 0.0
+        total_credit_uzs = total_credit_usd = 0.0
+        for s in shops:
+            bal_uzs = float(s.loan_balance_uzs)
+            bal_usd = float(s.loan_balance_usd)
+            name = s.name + (" (arxiv)" if s.is_archived else "")
+            if bal_uzs > 0 or bal_usd > 0:
+                recv_items.append({"name": name, "uzs": max(0.0, bal_uzs), "usd": max(0.0, bal_usd)})
+            total_recv_uzs += max(0.0, bal_uzs)
+            total_recv_usd += max(0.0, bal_usd)
+            if bal_uzs < 0 or bal_usd < 0:
+                credit_items.append({"name": name, "uzs": max(0.0, -bal_uzs), "usd": max(0.0, -bal_usd)})
+            total_credit_uzs += max(0.0, -bal_uzs)
+            total_credit_usd += max(0.0, -bal_usd)
 
-        # Inventory — current stock valued at last purchase price
+        # Inventory — current stock valued at the manual Ombor price (avg_cost_uzs)
         ingredients = Ingredient.objects.filter(is_archived=False).select_related("unit")
         inv_items = []
         total_inv = 0.0
@@ -859,8 +1180,21 @@ class SofpView(APIView):
                 "total_uzs": total_recv_uzs,
                 "total_usd": total_recv_usd,
             },
-            # Inventory is valued from last purchase price (UZS only).
+            # Inventory is valued from the manual Ombor price (avg_cost_uzs, UZS only).
             "inventory": {"items": inv_items, "total_uzs": total_inv},
+            # Liabilities — customer credits (shops that overpaid / prepaid).
+            "liabilities": {
+                "customer_credits": {
+                    "items": credit_items,
+                    "total_uzs": total_credit_uzs,
+                    "total_usd": total_credit_usd,
+                },
+                "total_uzs": total_credit_uzs,
+                "total_usd": total_credit_usd,
+            },
             "total_assets_uzs": total_cash_uzs + total_recv_uzs + total_inv,
             "total_assets_usd": total_cash_usd + total_recv_usd,
+            # Net worth after subtracting liabilities (a simple equity proxy).
+            "net_worth_uzs": total_cash_uzs + total_recv_uzs + total_inv - total_credit_uzs,
+            "net_worth_usd": total_cash_usd + total_recv_usd - total_credit_usd,
         })

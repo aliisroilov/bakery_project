@@ -6,6 +6,7 @@ from .models import (
     ExpenseCategory,
     GeneralExpense,
     KassaAccount,
+    KassaExchange,
     KassaTransaction,
     KassaTransfer,
     Payment,
@@ -109,6 +110,35 @@ class KassaTransferSerializer(serializers.ModelSerializer):
         if data.get("amount", 0) <= 0:
             raise serializers.ValidationError(
                 {"amount": "Summa musbat bo'lishi kerak."}
+            )
+        return data
+
+
+class KassaExchangeSerializer(serializers.ModelSerializer):
+    account_name = serializers.CharField(source="account.name", read_only=True)
+    created_by_name = serializers.CharField(
+        source="created_by.display_name", read_only=True, default=""
+    )
+
+    class Meta:
+        model = KassaExchange
+        fields = [
+            "id", "account", "account_name",
+            "from_currency", "to_currency",
+            "from_amount", "to_amount", "rate",
+            "occurred_at", "note",
+            "created_by", "created_by_name", "created_at",
+        ]
+        read_only_fields = ["created_at"]
+
+    def validate(self, data):
+        if data.get("from_currency") == data.get("to_currency"):
+            raise serializers.ValidationError(
+                {"to_currency": "Valyutalar har xil bo'lishi kerak."}
+            )
+        if data.get("from_amount", 0) <= 0 or data.get("to_amount", 0) <= 0:
+            raise serializers.ValidationError(
+                {"from_amount": "Summalar musbat bo'lishi kerak."}
             )
         return data
 

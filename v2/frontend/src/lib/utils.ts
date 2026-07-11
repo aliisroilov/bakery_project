@@ -39,6 +39,13 @@ export function fmtDate(iso: string | null | undefined): string {
   }).format(new Date(iso));
 }
 
+/** Format a "YYYY-MM-DD" (or ISO) date string as "DD-MM-YYYY". */
+export function fmtDMY(d: string | null | undefined): string {
+  if (!d) return "—";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
+}
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }

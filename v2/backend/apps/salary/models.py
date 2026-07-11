@@ -38,6 +38,10 @@ class SalaryRate(TimestampedModel):
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0,
         help_text="Pre-system debt owed to or by employee (positive = we owe them).",
     )
+    # Salary accrues only from this date forward. Production and time-based pay
+    # before this date are NOT counted (used for a period close / fresh start so
+    # historical production doesn't resurface as unpaid salary). Null = count all.
+    reset_date = models.DateField(null=True, blank=True)
     note = models.TextField(blank=True)
 
     class Meta:
@@ -85,6 +89,11 @@ class SalaryPayment(TimestampedModel):
     )
     period_start = models.DateField(null=True, blank=True)
     period_end = models.DateField(null=True, blank=True)
+    # When True, the payment is kept as a historical record but no longer counts
+    # toward the running salary balance (earned/paid/remaining). Used to "close"
+    # a period and reset everyone's outstanding balance to zero without deleting
+    # any payment data.
+    settled = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         ordering = ["-occurred_at"]

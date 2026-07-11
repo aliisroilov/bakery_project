@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Banknote,
+  CalendarRange,
   Factory,
   History,
   Pencil,
@@ -18,7 +19,13 @@ import {
 import { api } from "../lib/api";
 import { C, TICK, mkTooltip } from "../lib/chart";
 import type { KassaAccount, Paginated } from "../lib/types";
-import { formatMoney, fmtDate, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { formatMoney, fmtDate, fmtDMY, nowTashkentStr, tashkentToISO } from "../lib/utils";
+
+/** "dd-mm-yyyy – dd-mm-yyyy" for a salary payment's covered period, or null. */
+function periodLabel(p: { period_start: string | null; period_end: string | null }): string | null {
+  if (!p.period_start && !p.period_end) return null;
+  return `${p.period_start ? fmtDMY(p.period_start) : "…"} – ${p.period_end ? fmtDMY(p.period_end) : "…"}`;
+}
 
 type Kind = "salary" | "advance" | "bonus" | "deduction";
 type RateType = "per_unit" | "per_meshok" | "per_week" | "fixed_monthly" | "per_product";
@@ -335,13 +342,14 @@ export function SalaryPage() {
                 <th className="text-left px-4 py-3 font-medium">Tur</th>
                 <th className="text-right px-4 py-3 font-medium">Miqdor</th>
                 <th className="text-left px-4 py-3 font-medium">Kassa</th>
+                <th className="text-left px-4 py-3 font-medium">Davr</th>
                 <th className="text-left px-4 py-3 font-medium">Izoh</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {payments?.results.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-4 py-10 text-center text-muted-foreground">
                     Oylik to'lovlari hali yo'q
                   </td>
                 </tr>
@@ -363,6 +371,9 @@ export function SalaryPage() {
                     {formatMoney(p.amount, p.currency)}
                   </td>
                   <td className="px-4 py-2 text-muted-foreground">{p.account_name}</td>
+                  <td className="px-4 py-2 text-muted-foreground whitespace-nowrap tabular-nums">
+                    {periodLabel(p) ?? "—"}
+                  </td>
                   <td className="px-4 py-2 text-muted-foreground truncate max-w-xs">
                     {p.note}
                   </td>
@@ -399,6 +410,11 @@ export function SalaryPage() {
                   </span>
                 </div>
               </div>
+              {periodLabel(p) && (
+                <div className="text-xs inline-flex items-center gap-1 text-bakery-700 dark:text-bakery-300">
+                  <CalendarRange className="size-3" /> Davr: {periodLabel(p)}
+                </div>
+              )}
               {p.note && (
                 <div className="text-xs text-muted-foreground italic truncate">
                   {p.note}
@@ -1086,6 +1102,13 @@ function HistoryDrawer({
                         {p.occurred_at.slice(0, 16).replace("T", " ")} ·{" "}
                         {p.account_name}
                       </div>
+                      {periodLabel(p) && (
+                        <div className="mt-1">
+                          <span className="inline-flex items-center gap-1 text-xs rounded-full bg-bakery-50 dark:bg-bakery-950/40 text-bakery-700 dark:text-bakery-300 px-2 py-0.5">
+                            <CalendarRange className="size-3" /> Davr: {periodLabel(p)}
+                          </span>
+                        </div>
+                      )}
                       {p.note && (
                         <div className="text-xs text-muted-foreground mt-1 italic">
                           {p.note}

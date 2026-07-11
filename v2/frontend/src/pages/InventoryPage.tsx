@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Plus, Settings2, Wheat } from "lucide-react";
+import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Pencil, Plus, Settings2, Wheat } from "lucide-react";
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated } from "../lib/types";
 import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
@@ -50,6 +50,7 @@ export function InventoryPage() {
   const [reviziyaOpen, setReviziyaOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [adjustIng, setAdjustIng] = useState<Ingredient | null>(null);
+  const [priceIng, setPriceIng] = useState<Ingredient | null>(null);
   const [showArchivedIng, setShowArchivedIng] = useState(false);
 
   const qc = useQueryClient();
@@ -141,7 +142,7 @@ export function InventoryPage() {
               <th className="text-left px-4 py-3 font-medium">Nomi</th>
               <th className="text-right px-4 py-3 font-medium">Zaxira</th>
               <th className="text-right px-4 py-3 font-medium">Minimum</th>
-              <th className="text-right px-4 py-3 font-medium">O'rta narx</th>
+              <th className="text-right px-4 py-3 font-medium">Narx (1 birlik)</th>
               <th className="text-right px-4 py-3 font-medium w-36"></th>
             </tr>
           </thead>
@@ -164,10 +165,19 @@ export function InventoryPage() {
                 <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                   {parseFloat(i.low_stock_threshold).toFixed(2)} {i.unit_short}
                 </td>
-                <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
-                  {parseFloat(i.avg_cost_uzs) > 0
-                    ? formatMoney(i.avg_cost_uzs, "UZS")
-                    : "—"}
+                <td className="px-4 py-3 text-right">
+                  <button
+                    onClick={() => setPriceIng(i)}
+                    className="inline-flex items-center gap-1 tabular-nums hover:text-bakery-600 group"
+                    title="Narxni qo'lda belgilash"
+                  >
+                    {parseFloat(i.avg_cost_uzs) > 0 ? (
+                      <span className="text-foreground/80">{formatMoney(i.avg_cost_uzs, "UZS")}</span>
+                    ) : (
+                      <span className="text-bakery-600">Narx belgilash</span>
+                    )}
+                    <Pencil className="size-3 opacity-40 group-hover:opacity-100" />
+                  </button>
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
                   {!i.is_archived && (
@@ -228,11 +238,13 @@ export function InventoryPage() {
                   <span className="text-muted-foreground">
                     min {parseFloat(i.low_stock_threshold).toFixed(2)}
                   </span>
-                  {parseFloat(i.avg_cost_uzs) > 0 && (
-                    <span className="text-muted-foreground">
-                      {formatMoney(i.avg_cost_uzs, "UZS")}
-                    </span>
-                  )}
+                  <button
+                    onClick={() => setPriceIng(i)}
+                    className="inline-flex items-center gap-1 text-bakery-600"
+                  >
+                    {parseFloat(i.avg_cost_uzs) > 0 ? formatMoney(i.avg_cost_uzs, "UZS") : "Narx belgilash"}
+                    <Pencil className="size-3 opacity-60" />
+                  </button>
                 </div>
               </div>
               <div className="shrink-0 flex items-center gap-1">
@@ -424,6 +436,88 @@ export function InventoryPage() {
       {adjustIng && (
         <AdjustModal ingredient={adjustIng} onClose={() => setAdjustIng(null)} />
       )}
+      {priceIng && (
+        <SetPriceModal ingredient={priceIng} onClose={() => setPriceIng(null)} />
+      )}
+    </div>
+  );
+}
+
+function SetPriceModal({
+  ingredient,
+  onClose,
+}: {
+  ingredient: Ingredient;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [price, setPrice] = useState(
+    parseFloat(ingredient.avg_cost_uzs || "0") > 0
+      ? parseFloat(ingredient.avg_cost_uzs).toFixed(2)
+      : "",
+  );
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.post(`/inventory/ingredients/${ingredient.id}/set-price/`, {
+        avg_cost_uzs: price || "0",
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+      onClose();
+    },
+  });
+
+  const canSave = price !== "" && parseFloat(price) >= 0 && !isNaN(parseFloat(price));
+
+  return (
+    <div
+      className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm bg-card rounded-2xl shadow-xl border p-4 sm:p-6"
+      >
+        <h2 className="font-semibold text-lg mb-1">{ingredient.name} — narx</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          1 {ingredient.unit_short} uchun narxni qo'lda belgilang. Bu narx mahsulot
+          tannarxini hisoblashda ishlatiladi.
+        </p>
+        <div className="space-y-3">
+          <Field label={`Narx (1 ${ingredient.unit_short} uchun, UZS)`}>
+            <input
+              autoFocus
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              inputMode="decimal"
+              placeholder="0"
+            />
+          </Field>
+        </div>
+        {save.isError && (
+          <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">
+            Narxni saqlashda xatolik.
+          </div>
+        )}
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="h-10 px-4 rounded-lg border text-sm hover:bg-muted"
+          >
+            Bekor qilish
+          </button>
+          <button
+            disabled={!canSave || save.isPending}
+            onClick={() => save.mutate()}
+            className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
+          >
+            {save.isPending ? "Saqlanmoqda…" : "Saqlash"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

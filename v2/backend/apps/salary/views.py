@@ -154,18 +154,22 @@ class ProductionBreakdownView(APIView):
         if not user_id:
             return Response({"results": [], "count": 0})
 
+        # Respect the salary reset date so the breakdown matches the earned figure
+        # (production before the reset isn't counted toward salary).
+        rate = SalaryRate.objects.filter(user_id=user_id).first()
+        reset = rate.reset_date if rate else None
+
         # Both individual and group productions count the FULL quantity for this
         # user — matching the salary calculation (no split among group members).
-        individual = list(
-            Production.objects.filter(nonvoy_id=user_id)
-            .select_related("product")
-            .order_by("-occurred_at")
-        )
-        group_prods = list(
-            Production.objects.filter(group__members__id=user_id, nonvoy__isnull=True)
-            .select_related("product", "group")
-            .order_by("-occurred_at")
-        )
+        individual = Production.objects.filter(nonvoy_id=user_id).select_related("product")
+        group_qs = Production.objects.filter(
+            group__members__id=user_id, nonvoy__isnull=True
+        ).select_related("product", "group")
+        if reset:
+            individual = individual.filter(occurred_at__date__gte=reset)
+            group_qs = group_qs.filter(occurred_at__date__gte=reset)
+        individual = list(individual.order_by("-occurred_at"))
+        group_prods = list(group_qs.order_by("-occurred_at"))
 
         rows = [p for p in individual] + [p for p in group_prods]
 
@@ -257,8 +261,9 @@ class SalaryEmployeeSummaryView(APIView):
                 else Decimal("0.00")
             )
 
-            # Payments made within the selected range.
-            payments = SalaryPayment.objects.filter(user=u)
+            # Payments made within the selected range. Settled payments are kept
+            # as history but excluded from the running balance (period close).
+            payments = SalaryPayment.objects.filter(user=u, settled=False)
             if date_from:
                 payments = payments.filter(occurred_at__date__gte=date_from)
             if date_to:

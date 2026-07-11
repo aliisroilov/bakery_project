@@ -61,6 +61,7 @@ class KassaTransactionType(models.TextChoices):
     CASH_HANDOVER = "cash_handover", "Pul topshirish"
     ADJUSTMENT = "adjustment", "Qo'lda tuzatish"
     TRANSFER = "transfer", "Kassalar orasida"
+    EXCHANGE = "exchange", "Valyuta ayirboshlash"
 
 
 class KassaTransaction(TimestampedModel):
@@ -271,6 +272,52 @@ class KassaTransfer(TimestampedModel):
 
     def __str__(self) -> str:
         return f"{self.from_account.name} → {self.to_account.name}: {self.amount} {self.currency}"
+
+
+class KassaExchange(TimestampedModel):
+    """
+    Currency exchange inside ONE kassa: convert `from_amount` of `from_currency`
+    into `to_amount` of `to_currency` (e.g. 700 USD → 8 820 000 UZS at rate 12 600).
+
+    Debits one balance and credits the other on the same account atomically,
+    and logs two KassaTransaction rows (one per currency leg).
+    """
+
+    account = models.ForeignKey(
+        KassaAccount,
+        on_delete=models.PROTECT,
+        related_name="exchanges",
+    )
+    from_currency = models.CharField(max_length=3, choices=Currency.CHOICES)
+    to_currency = models.CharField(max_length=3, choices=Currency.CHOICES)
+    from_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES
+    )
+    to_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES
+    )
+    # UZS per 1 USD — stored for the record / audit trail.
+    rate = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0
+    )
+    occurred_at = models.DateTimeField(db_index=True)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="kassa_exchanges",
+    )
+
+    class Meta:
+        ordering = ["-occurred_at"]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.account.name}: {self.from_amount} {self.from_currency} "
+            f"→ {self.to_amount} {self.to_currency}"
+        )
 
 
 # ────────────────── Cash handover (driver → office) ──────────────────

@@ -668,9 +668,9 @@ function NewOrderModal({
           </div>
 
           {isDelivering && (
-            <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                <Banknote className="size-4" />
+            <div className="rounded-xl border bg-background p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Banknote className="size-4 text-muted-foreground" />
                 Pul oldingizmi? (ixtiyoriy)
               </div>
               <div className="grid grid-cols-2 gap-3">

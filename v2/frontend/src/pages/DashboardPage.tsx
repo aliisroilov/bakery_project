@@ -16,6 +16,9 @@ import {
   HandCoins,
   Truck,
   X,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
@@ -25,7 +28,21 @@ import { useAuth } from "../lib/auth";
 import { C, TICK, mkTooltip } from "../lib/chart";
 import { api } from "../lib/api";
 import type { DashboardSummary } from "../lib/types";
-import { formatMoney } from "../lib/utils";
+import { formatMoney, nowTashkentStr } from "../lib/utils";
+
+/** Shift a YYYY-MM-DD date string by `delta` days (UTC-safe). */
+function shiftDay(d: string, delta: number): string {
+  const [y, m, dd] = d.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, dd + delta)).toISOString().slice(0, 10);
+}
+
+/** Short DD.MM label for a YYYY-MM-DD date ("Bugun" for today), e.g. "27.06". */
+function dayLabel(d: string, today: string): string {
+  if (d === today) return "Bugun";
+  const [y, m, dd] = d.split("-");
+  const base = `${dd}.${m}`;
+  return y !== today.slice(0, 4) ? `${base}.${y}` : base;
+}
 
 function formatDeliveryTime(iso: string | null): string {
   if (!iso) return "";
@@ -38,27 +55,75 @@ function formatDeliveryTime(iso: string | null): string {
 export function DashboardPage() {
   const user = useAuth((s) => s.user);
   const [netIncomeOpen, setNetIncomeOpen] = useState(false);
+  const today = nowTashkentStr().slice(0, 10);
+  const [selectedDate, setSelectedDate] = useState(today);
 
   if (user?.role === "driver") return <DriverDashboard />;
 
+  const isToday = selectedDate === today;
+
   const { data, isLoading, error } = useQuery<DashboardSummary>({
-    queryKey: ["dashboard", "summary"],
-    queryFn: async () => (await api.get<DashboardSummary>("/dashboard/summary/")).data,
-    refetchInterval: 30_000,
+    queryKey: ["dashboard", "summary", selectedDate],
+    queryFn: async () =>
+      (await api.get<DashboardSummary>(`/dashboard/summary/?date=${selectedDate}`)).data,
+    refetchInterval: isToday ? 30_000 : false,
   });
 
   const seyf = data?.accounts.find((a) => a.slug === "seyf");
   const rizoxon = data?.accounts.find((a) => a.slug === "rizoxon");
 
+  // Prefix for day-scoped stat labels ("Bugungi" today, else the date).
+  const pfx = isToday ? "Bugungi" : dayLabel(selectedDate, today);
+
   return (
     <div className="space-y-5 sm:space-y-6">
-      <div>
-        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-          Salom, {user?.display_name}
-        </h1>
-        <p className="text-muted-foreground text-sm">
-          Bugungi umumiy holat bir qarashda.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+            Salom, {user?.display_name}
+          </h1>
+          <p className="text-muted-foreground text-sm">
+            {isToday ? "Bugungi umumiy holat bir qarashda." : `${dayLabel(selectedDate, today)} kunining holati.`}
+          </p>
+        </div>
+
+        {/* Day navigator */}
+        <div className="flex items-center gap-1.5 self-start sm:self-auto">
+          <button
+            onClick={() => setSelectedDate((d) => shiftDay(d, -1))}
+            className="size-9 grid place-items-center rounded-lg border bg-card hover:bg-muted transition-colors"
+            title="Oldingi kun"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          <label className="relative flex items-center gap-2 h-9 px-3 rounded-lg border bg-card hover:bg-muted transition-colors cursor-pointer">
+            <CalendarDays className="size-4 text-bakery-500 shrink-0" />
+            <span className="text-sm font-medium tabular-nums">{dayLabel(selectedDate, today)}</span>
+            <input
+              type="date"
+              value={selectedDate}
+              max={today}
+              onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer"
+            />
+          </label>
+          <button
+            onClick={() => setSelectedDate((d) => shiftDay(d, 1))}
+            disabled={isToday}
+            className="size-9 grid place-items-center rounded-lg border bg-card hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Keyingi kun"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+          {!isToday && (
+            <button
+              onClick={() => setSelectedDate(today)}
+              className="h-9 px-3 rounded-lg border bg-bakery-500 text-white text-sm hover:bg-bakery-600 transition-colors"
+            >
+              Bugun
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -116,7 +181,7 @@ export function DashboardPage() {
         <StatCard
           to="/production"
           icon={<Factory className="size-5" />}
-          label="Bugungi ishlab chiqarish"
+          label={`${pfx} ishlab chiqarish`}
           primary={data ? `${parseFloat(data.production.today.meshok).toFixed(1)} qop` : "—"}
           secondary={
             data
@@ -128,7 +193,7 @@ export function DashboardPage() {
         <StatCard
           to="/finance"
           icon={<ShoppingCart className="size-5" />}
-          label="Bugungi kirim"
+          label={`${pfx} kirim`}
           primary={data ? formatMoney(data.kirim_today.uzs, "UZS") : "—"}
           secondary={data ? formatMoney(data.kirim_today.usd, "USD") : "so'm + $"}
           loading={isLoading}
@@ -141,9 +206,9 @@ export function DashboardPage() {
         <StatCard
           to="/orders"
           icon={<ShoppingCart className="size-5" />}
-          label="Bugungi buyurtmalar"
+          label={`${pfx} buyurtmalar`}
           primary={data ? String(data.orders_today.total) : "—"}
-          secondary="Jami bugun"
+          secondary={isToday ? "Jami bugun" : "Jami"}
           loading={isLoading}
         />
         <StatCard
@@ -151,7 +216,7 @@ export function DashboardPage() {
           icon={<Clock className="size-5" />}
           label="Kutilmoqda"
           primary={data ? String(data.orders_today.pending) : "—"}
-          secondary="Bugun"
+          secondary={isToday ? "Bugun" : dayLabel(selectedDate, today)}
           loading={isLoading}
           tone="warning"
         />
@@ -160,7 +225,7 @@ export function DashboardPage() {
           icon={<PackageOpen className="size-5" />}
           label="Qisman yetkazilgan"
           primary={data ? String(data.orders_today.partial) : "—"}
-          secondary="Bugun"
+          secondary={isToday ? "Bugun" : dayLabel(selectedDate, today)}
           loading={isLoading}
           tone="warning"
         />
@@ -169,7 +234,7 @@ export function DashboardPage() {
           icon={<CheckCircle2 className="size-5" />}
           label="Yetkazilgan"
           primary={data ? String(data.orders_today.delivered) : "—"}
-          secondary="Bugun"
+          secondary={isToday ? "Bugun" : dayLabel(selectedDate, today)}
           loading={isLoading}
           tone="success"
         />
@@ -298,7 +363,7 @@ export function DashboardPage() {
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-2">
                 <TrendingUp className="size-4 text-bakery-500" />
-                <h2 className="font-semibold">Net daromad (bugun)</h2>
+                <h2 className="font-semibold">Net daromad ({isToday ? "bugun" : dayLabel(selectedDate, today)})</h2>
               </div>
               <ArrowRight className="size-4 text-muted-foreground" />
             </div>
@@ -379,7 +444,7 @@ export function DashboardPage() {
           <div className="rounded-xl border bg-card p-4 sm:p-5">
             <div className="flex items-center gap-2 mb-3">
               <ShoppingCart className="size-4 text-bakery-500" />
-              <h2 className="font-semibold text-sm">Bugungi buyurtmalar holati</h2>
+              <h2 className="font-semibold text-sm">{pfx} buyurtmalar holati</h2>
             </div>
             <ResponsiveContainer width="100%" height={160}>
               <PieChart>
@@ -415,7 +480,7 @@ export function DashboardPage() {
             <div className="rounded-xl border bg-card p-4 sm:p-5">
               <div className="flex items-center gap-2 mb-3">
                 <Factory className="size-4 text-bakery-500" />
-                <h2 className="font-semibold text-sm">Bugungi ishlab chiqarish (qop)</h2>
+                <h2 className="font-semibold text-sm">{pfx} ishlab chiqarish (qop)</h2>
               </div>
               <ResponsiveContainer width="100%" height={160}>
                 <BarChart
@@ -465,6 +530,16 @@ function NetIncomeHistoryModal({ onClose }: { onClose: () => void }) {
     net: Math.round(parseFloat(r.net_uzs) / 1_000_000 * 10) / 10,
   }));
 
+  // One-month totals across the whole range shown.
+  const totals = (data?.results ?? []).reduce(
+    (a, r) => ({
+      kirim: a.kirim + parseFloat(r.revenue_uzs || "0"),
+      chiqim: a.chiqim + parseFloat(r.expenses_uzs || "0"),
+      net: a.net + parseFloat(r.net_uzs || "0"),
+    }),
+    { kirim: 0, chiqim: 0, net: 0 },
+  );
+
   return (
     <div
       className="fixed inset-0 bg-black/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
@@ -503,6 +578,28 @@ function NetIncomeHistoryModal({ onClose }: { onClose: () => void }) {
               </BarChart>
             </ResponsiveContainer>
 
+            {/* One-month totals */}
+            <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
+              <div className="rounded-xl border bg-muted/30 p-3">
+                <div className="text-[11px] text-muted-foreground">Kirim (30 kun jami)</div>
+                <div className="font-semibold tabular-nums text-emerald-600 text-sm sm:text-base mt-0.5">
+                  {formatMoney(String(totals.kirim), "UZS")}
+                </div>
+              </div>
+              <div className="rounded-xl border bg-muted/30 p-3">
+                <div className="text-[11px] text-muted-foreground">Chiqim (30 kun jami)</div>
+                <div className="font-semibold tabular-nums text-destructive text-sm sm:text-base mt-0.5">
+                  {formatMoney(String(totals.chiqim), "UZS")}
+                </div>
+              </div>
+              <div className="rounded-xl border bg-muted/30 p-3">
+                <div className="text-[11px] text-muted-foreground">Net (30 kun jami)</div>
+                <div className={`font-semibold tabular-nums text-sm sm:text-base mt-0.5 ${totals.net >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+                  {totals.net >= 0 ? "+" : ""}{formatMoney(String(totals.net), "UZS")}
+                </div>
+              </div>
+            </div>
+
             <div className="mt-4 max-h-64 overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="bg-muted/50 text-muted-foreground sticky top-0">
@@ -532,6 +629,20 @@ function NetIncomeHistoryModal({ onClose }: { onClose: () => void }) {
                     );
                   })}
                 </tbody>
+                <tfoot className="sticky bottom-0 bg-muted border-t-2 font-semibold">
+                  <tr>
+                    <td className="px-3 py-2">Jami</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-emerald-700">
+                      {formatMoney(String(totals.kirim), "UZS")}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-destructive">
+                      {formatMoney(String(totals.chiqim), "UZS")}
+                    </td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${totals.net >= 0 ? "text-emerald-700" : "text-destructive"}`}>
+                      {totals.net >= 0 ? "+" : ""}{formatMoney(String(totals.net), "UZS")}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </>
