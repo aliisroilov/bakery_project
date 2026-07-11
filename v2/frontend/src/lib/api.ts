@@ -3,7 +3,9 @@
  *
  * - Stores access + refresh tokens in localStorage.
  * - On 401, tries to refresh once, then logs out if refresh also fails.
- * - All requests go to VITE_API_BASE (default http://localhost:8001/api/v1).
+ * - All requests go to VITE_API_BASE. In production builds it defaults to the
+ *   same-origin `/api/v1` (Nginx proxies it); only the Vite dev server falls
+ *   back to the local backend URL.
  */
 import axios, {
   AxiosError,
@@ -11,8 +13,13 @@ import axios, {
   type InternalAxiosRequestConfig,
 } from "axios";
 
+// Production builds must never default to localhost — a prod bundle built
+// without VITE_API_BASE (e.g. CI without .env.production) would send every
+// request to the *user's own* machine and silently break login. So the default
+// is same-origin in prod and the dev backend only when running `vite` locally.
 const API_BASE =
-  import.meta.env.VITE_API_BASE ?? "http://localhost:8001/api/v1";
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV ? "http://localhost:8001/api/v1" : "/api/v1");
 
 const STORAGE = {
   ACCESS: "bakery.access",
