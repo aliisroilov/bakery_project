@@ -27,6 +27,9 @@ class KassaAccountSerializer(serializers.ModelSerializer):
 class KassaTransactionSerializer(serializers.ModelSerializer):
     account_name = serializers.CharField(source="account.name", read_only=True)
     kind_display = serializers.CharField(source="get_kind_display", read_only=True)
+    created_by_name = serializers.CharField(
+        source="created_by.display_name", read_only=True, default=None
+    )
 
     class Meta:
         model = KassaTransaction
@@ -34,7 +37,7 @@ class KassaTransactionSerializer(serializers.ModelSerializer):
             "id", "account", "account_name",
             "kind", "kind_display", "currency", "amount",
             "reference_model", "reference_id",
-            "note", "occurred_at", "created_by", "created_at",
+            "note", "occurred_at", "created_by", "created_by_name", "created_at",
         ]
         read_only_fields = ["created_at"]
 

@@ -53,6 +53,7 @@ interface KassaTransaction {
   occurred_at: string;
   reference_model: string;
   reference_id: number | null;
+  created_by_name: string | null;
 }
 
 // All kinds backed by an editable source record.
@@ -91,6 +92,7 @@ function TxDetails({ tx }: { tx: KassaTransaction }) {
     ["Miqdor", <span className={inbound ? "text-emerald-700" : "text-destructive"}>{inbound ? "+" : ""}{formatMoney(tx.amount, tx.currency)}</span>],
     ["Sana", fmtDateTime(tx.occurred_at)],
     ["Manba", source],
+    ["Kim kiritdi", tx.created_by_name || "—"],
   ];
   if (tx.note) rows.push(["Izoh", tx.note]);
   return (
