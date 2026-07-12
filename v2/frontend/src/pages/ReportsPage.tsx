@@ -891,7 +891,7 @@ function GrossDailyTab() {
           )}
 
           <p className="text-xs text-muted-foreground">
-            Tan narxi = materiallar + nonvoy (ishlab chiqarish) ish haqi · Oylik to'lovlar = boshqa xodimlar.
+            Tan narxi = materiallar + kommunal (gaz/svet) + nonvoy ish haqi · Oylik to'lovlar = boshqa xodimlar.
           </p>
 
           {/* Cross-tab: clients × products */}
@@ -1230,6 +1230,15 @@ function CosDetail({ cos }: { cos: any }) {
         foot={["Jami", "", "", <Money v={cos.materials_total ?? cos.total} />]}
         empty="Material tannarxi yo'q"
       />
+      {(cos.communal_total ?? 0) > 0 && (
+        <DetailTable
+          title={`Kommunal (gaz/svet) — ${fm(cos.communal_total)}`}
+          head={["Mahsulot", "Miqdor", "1 dona", "Summa"]}
+          rows={(cos.communal_items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
+          foot={["Jami", "", "", <Money v={cos.communal_total} />]}
+          empty="Kommunal xarajat yo'q"
+        />
+      )}
       <div>
         <div className="text-sm font-semibold mb-2">Ishlab chiqarish ish haqi (nonvoy) — {fm(cos.salary_total ?? 0)}</div>
         <GroupedDetail
@@ -1608,7 +1617,7 @@ export function ReportsPage() {
 
           {(active === "pnl_daily" || active === "gross_overall") && (
             <p className="text-xs text-muted-foreground -mt-1">
-              <span className="font-medium text-foreground">Tan narxi</span> = materiallar + nonvoy (ishlab chiqarish) ish haqi ·{" "}
+              <span className="font-medium text-foreground">Tan narxi</span> = materiallar + kommunal + nonvoy ish haqi ·{" "}
               <span className="font-medium text-foreground">Oylik</span> = boshqa xodimlar (menejer, haydovchi…).{" "}
               {active === "gross_overall" && "Har bir raqamni bosib tarkibini oching."}
             </p>

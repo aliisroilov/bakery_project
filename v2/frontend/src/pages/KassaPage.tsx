@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Wallet,
@@ -13,6 +13,7 @@ import {
   ArrowLeftRight,
   Repeat,
   Pencil,
+  Info,
   X,
 } from "lucide-react";
 import {
@@ -64,6 +65,45 @@ const EDITABLE_KINDS = new Set([
   "cash_handover",
   "transfer",
 ]);
+
+// Human label for the source record a kassa transaction was generated from.
+const REFERENCE_LABEL: Record<string, string> = {
+  Payment: "Do'kon to'lovi",
+  GeneralExpense: "Xarajat",
+  SalaryPayment: "Oylik to'lovi",
+  KassaTransfer: "Kassa o'tkazmasi",
+  CashHandover: "Haydovchi topshirig'i",
+  KassaExchange: "Valyuta ayirboshlash",
+  Purchase: "Xomashyo xaridi",
+  Order: "Buyurtma",
+};
+
+// Full details of one kassa transaction — shared by the desktop hover popover
+// and the mobile tap-to-expand block.
+function TxDetails({ tx }: { tx: KassaTransaction }) {
+  const inbound = parseFloat(tx.amount) >= 0;
+  const source = tx.reference_model
+    ? `${REFERENCE_LABEL[tx.reference_model] ?? tx.reference_model}${tx.reference_id ? ` #${tx.reference_id}` : ""}`
+    : "Qo'lda kiritilgan";
+  const rows: [string, ReactNode][] = [
+    ["Turi", tx.kind_display],
+    ["Kassa", tx.account_name],
+    ["Miqdor", <span className={inbound ? "text-emerald-700" : "text-destructive"}>{inbound ? "+" : ""}{formatMoney(tx.amount, tx.currency)}</span>],
+    ["Sana", fmtDateTime(tx.occurred_at)],
+    ["Manba", source],
+  ];
+  if (tx.note) rows.push(["Izoh", tx.note]);
+  return (
+    <dl className="space-y-1.5 text-xs">
+      {rows.map(([k, v]) => (
+        <div key={k} className="flex gap-3 justify-between">
+          <dt className="text-muted-foreground shrink-0">{k}</dt>
+          <dd className="text-right font-medium tabular-nums break-words min-w-0">{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
 
 interface DriverHandoverRow {
   driver_id: number;
@@ -146,6 +186,9 @@ export function KassaPage() {
   const [handoverOpen, setHandoverOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [editTx, setEditTx] = useState<KassaTransaction | null>(null);
+  // Transaction detail: desktop hover popover + mobile tap-to-expand.
+  const [hoverTx, setHoverTx] = useState<{ tx: KassaTransaction; top: number; right: number } | null>(null);
+  const [expandedTxId, setExpandedTxId] = useState<number | null>(null);
   const today = nowTashkentStr().slice(0, 10);
   const [reportFrom, setReportFrom] = useState<string>(today);
   const [reportTo, setReportTo] = useState<string>(today);
@@ -470,7 +513,18 @@ export function KassaPage() {
                     {inbound ? "+" : ""}
                     {formatMoney(tx.amount, tx.currency)}
                   </td>
-                  <td className="px-2 py-3 text-right">
+                  <td className="px-2 py-3 text-right whitespace-nowrap">
+                    <button
+                      onMouseEnter={(e) => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        setHoverTx({ tx, top: r.bottom, right: window.innerWidth - r.right });
+                      }}
+                      onMouseLeave={() => setHoverTx((h) => (h?.tx.id === tx.id ? null : h))}
+                      className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                      title="Tafsilotlar"
+                    >
+                      <Info className="size-3.5" />
+                    </button>
                     {canEdit && (
                       <button
                         onClick={() => setEditTx(tx)}
@@ -517,6 +571,13 @@ export function KassaPage() {
                       {inbound ? "+" : ""}
                       {formatMoney(tx.amount, tx.currency)}
                     </div>
+                    <button
+                      onClick={() => setExpandedTxId((id) => (id === tx.id ? null : tx.id))}
+                      className="p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+                      title="Tafsilotlar"
+                    >
+                      <Info className="size-3.5" />
+                    </button>
                     {canEdit && (
                       <button
                         onClick={() => setEditTx(tx)}
@@ -539,11 +600,26 @@ export function KassaPage() {
                     {tx.note}
                   </div>
                 )}
+                {expandedTxId === tx.id && (
+                  <div className="mt-2 rounded-lg border bg-muted/30 p-3">
+                    <TxDetails tx={tx} />
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       </div>
+
+      {/* Desktop hover popover (fixed so it never clips inside the table) */}
+      {hoverTx && (
+        <div
+          style={{ position: "fixed", top: hoverTx.top + 6, right: hoverTx.right, zIndex: 60 }}
+          className="hidden md:block w-72 max-w-[calc(100vw-1rem)] rounded-xl border bg-card shadow-xl p-3 pointer-events-none"
+        >
+          <TxDetails tx={hoverTx.tx} />
+        </div>
+      )}
       {kirimOpen && (
         <KirimModal
           accounts={accounts?.results ?? []}

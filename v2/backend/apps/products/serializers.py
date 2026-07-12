@@ -12,6 +12,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "id", "name", "description",
             "default_price_uzs", "default_price_usd",
             "production_salary_per_unit_uzs",
+            "communal_cost_per_unit_uzs",
             "cost_price_uzs", "cost_price_updated_at",
             "meshok_size",
             "sort_order",

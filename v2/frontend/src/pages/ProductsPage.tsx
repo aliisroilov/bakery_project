@@ -267,6 +267,7 @@ function ProductModal({
   const [defaultUzs, setDefaultUzs] = useState(product?.default_price_uzs ?? "0");
   const [meshokSize, setMeshokSize] = useState(product?.meshok_size ?? "160");
   const [salary, setSalary] = useState(product?.production_salary_per_unit_uzs ?? "0");
+  const [communal, setCommunal] = useState(product?.communal_cost_per_unit_uzs ?? "0");
   const [lines, setLines] = useState<ExistingRecipeLine[]>([
     { key: crypto.randomUUID(), ingredient: "", amount_per_meshok: "" },
   ]);
@@ -313,6 +314,7 @@ function ProductModal({
           default_price_uzs: defaultUzs,
           meshok_size: meshokSize,
           production_salary_per_unit_uzs: salary,
+          communal_cost_per_unit_uzs: communal,
         });
         // Sync recipe: delete removed lines, update/create others.
         const deletions = lines.filter((l) => l.deleted && l.id);
@@ -339,6 +341,7 @@ function ProductModal({
         default_price_uzs: defaultUzs,
         meshok_size: meshokSize,
         production_salary_per_unit_uzs: salary,
+        communal_cost_per_unit_uzs: communal,
       });
       const productId = res.data.id;
       await Promise.all(
@@ -397,7 +400,7 @@ function ProductModal({
               placeholder="Masalan: Sutli non"
             />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Field label="Narx (UZS)">
               <input
                 className="w-full h-10 px-3 rounded-lg border bg-background text-sm tabular-nums"
@@ -422,7 +425,20 @@ function ProductModal({
                 inputMode="decimal"
               />
             </Field>
+            <Field label="Kommunal 1 dona (gaz/svet)">
+              <input
+                className="w-full h-10 px-3 rounded-lg border bg-background text-sm tabular-nums"
+                value={communal}
+                onChange={(e) => setCommunal(e.target.value)}
+                inputMode="decimal"
+              />
+            </Field>
           </div>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Kommunal (gaz/svet) — 1 dona uchun, so'm. Tan narxiga qo'shiladi. Ikkilanib
+            hisoblanmasligi uchun <b>Kommunal</b> xarajat kategoriyasini admin panelda P&L'dan
+            chiqarib qo'ying.
+          </p>
 
           <div className="rounded-xl border bg-muted/30 p-3 sm:p-4">
             <div className="flex items-start justify-between gap-2 mb-3">

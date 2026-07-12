@@ -191,6 +191,14 @@ class ExpenseCategory(TimestampedModel, ArchivableModel):
 
     name = models.CharField(max_length=120, unique=True)
     note = models.CharField(max_length=255, blank=True)
+    # When False, expenses in this category are left out of the Hisobotlar P&L
+    # (Xarajatlar line, Op./Sof foyda and the drill-down). Use to drop non-expense
+    # categories (e.g. currency conversion) or ones already counted elsewhere
+    # (e.g. communal folded into Tan narxi per product). Toggled in Django admin.
+    include_in_pnl = models.BooleanField(
+        default=True,
+        help_text="Agar o'chirilsa, bu kategoriya Hisobotlar P&L xarajatlariga kirmaydi.",
+    )
 
     class Meta:
         ordering = ["name"]

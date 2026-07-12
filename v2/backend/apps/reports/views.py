@@ -429,7 +429,11 @@ def _compute_product_cos(product, price_map: dict, labour_map: dict | None = Non
         labour = round(labour_map[product.id], 2)
     else:
         labour = round(float(product.production_salary_per_unit_uzs) * meshok_size, 2)
-    cos = round(ing_total + labour, 2)
+    # Communal (gas/electricity) attributed per unit → per meshok, folded into
+    # tan narxi alongside materials and labour.
+    communal_per_unit = float(product.communal_cost_per_unit_uzs)
+    communal = round(communal_per_unit * meshok_size, 2)
+    cos = round(ing_total + labour + communal, 2)
     sale_price = float(product.default_price_uzs)
     ingredient_per_unit = round(ing_total / meshok_size, 2) if meshok_size else 0.0
     cos_per_unit = round(cos / meshok_size, 2) if meshok_size else 0.0
@@ -443,6 +447,8 @@ def _compute_product_cos(product, price_map: dict, labour_map: dict | None = Non
         "ingredients": ing_rows,
         "ingredient_total": ing_total,
         "labour": labour,
+        "communal": communal,
+        "communal_per_unit": round(communal_per_unit, 2),
         "cos_per_meshok": cos,
         "cos_per_unit": cos_per_unit,
         "ingredient_per_unit": ingredient_per_unit,
@@ -471,12 +477,14 @@ def _collect_pnl_data(start, end, tz):
           Tan narxi so gross profit reflects the true cost of making the goods.
         - other_sal: all other roles = period overhead, kept on the Oylik line.
     """
-    # Ingredient (material) cost per unit for every product, at the manual price.
+    # Material + communal cost per unit for every product: materials at the manual
+    # Ombor price, plus the per-unit communal (gas/electricity) rate. Both are
+    # folded into Tan narxi (COGS); nonvoy labour is added separately below.
     price_map = _build_price_map()
-    ing_per_unit = {
-        p.id: _compute_product_cos(p, price_map)["ingredient_per_unit"]
-        for p in Product.objects.prefetch_related("recipe_items__ingredient__unit")
-    }
+    mat_per_unit = {}
+    for p in Product.objects.prefetch_related("recipe_items__ingredient__unit"):
+        info = _compute_product_cos(p, price_map)
+        mat_per_unit[p.id] = info["ingredient_per_unit"] + info["communal_per_unit"]
 
     # Revenue + material COGS from net-delivered order items (accrual, matched).
     items_qs = (
@@ -493,11 +501,13 @@ def _collect_pnl_data(start, end, tz):
             continue
         d = item["order__order_date"]
         sales_by_date[d] = sales_by_date.get(d, 0.0) + float(item["unit_price"]) * net
-        cos_by_date[d] = cos_by_date.get(d, 0.0) + ing_per_unit.get(item["product_id"], 0.0) * net
+        cos_by_date[d] = cos_by_date.get(d, 0.0) + mat_per_unit.get(item["product_id"], 0.0) * net
 
+    # Expenses — categories flagged include_in_pnl=False are left out of the P&L.
     exp_qs = (
         GeneralExpense.objects
         .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+        .exclude(category__include_in_pnl=False)
         .annotate(d=TruncDate("occurred_at", tzinfo=tz))
         .values("d")
         .annotate(total=Sum("amount"))
@@ -821,7 +831,10 @@ class GrossDailyView(APIView):
             qty = net_qty
             price = float(item.unit_price)
             total = qty * price
-            cost_of_sales += cos_map.get(pid, {}).get("ingredient_per_unit", 0.0) * net_qty
+            _cinfo = cos_map.get(pid, {})
+            cost_of_sales += (
+                _cinfo.get("ingredient_per_unit", 0.0) + _cinfo.get("communal_per_unit", 0.0)
+            ) * net_qty
 
             if pid in shops_map[sid]["cells"]:
                 shops_map[sid]["cells"][pid]["qty"] += qty
@@ -881,9 +894,11 @@ class GrossDailyView(APIView):
             })
 
         # ── Expenses & salary for this day ────────────────────────────────
+        # Categories flagged include_in_pnl=False are left out of the P&L.
         exp_total = float(
             GeneralExpense.objects
             .filter(occurred_at__date=date, currency="UZS")
+            .exclude(category__include_in_pnl=False)
             .aggregate(t=Sum("amount"))["t"] or 0
         )
         # Salary: exclude advances (prepayments); subtract deductions. Split by
@@ -959,19 +974,21 @@ class PnlDetailView(APIView):
             return Response({"detail": "Invalid date. Use YYYY-MM-DD."}, status=400)
 
         price_map = _build_price_map()
-        ing_per_unit, names = {}, {}
+        ing_per_unit, communal_per_unit, names = {}, {}, {}
         for p in Product.objects.prefetch_related("recipe_items__ingredient__unit"):
-            ing_per_unit[p.id] = _compute_product_cos(p, price_map)["ingredient_per_unit"]
+            info = _compute_product_cos(p, price_map)
+            ing_per_unit[p.id] = info["ingredient_per_unit"]
+            communal_per_unit[p.id] = info["communal_per_unit"]
             names[p.id] = p.name
 
-        # Sales + material COGS by product (net delivered, cancelled excluded).
+        # Sales + material/communal COGS by product (net delivered, cancelled excluded).
         items = (
             OrderItem.objects
             .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
             .exclude(order__status="cancelled")
             .values("product_id", "unit_price", "delivered_quantity", "returned_quantity")
         )
-        sales_by_p, cos_by_p, qty_by_p = {}, {}, {}
+        sales_by_p, cos_by_p, communal_by_p, qty_by_p = {}, {}, {}, {}
         for it in items:
             net = max(0, it["delivered_quantity"] - it["returned_quantity"])
             if net == 0:
@@ -979,6 +996,7 @@ class PnlDetailView(APIView):
             pid = it["product_id"]
             sales_by_p[pid] = sales_by_p.get(pid, 0.0) + float(it["unit_price"]) * net
             cos_by_p[pid] = cos_by_p.get(pid, 0.0) + ing_per_unit.get(pid, 0.0) * net
+            communal_by_p[pid] = communal_by_p.get(pid, 0.0) + communal_per_unit.get(pid, 0.0) * net
             qty_by_p[pid] = qty_by_p.get(pid, 0) + net
         sales_items = sorted(
             [{"name": names.get(pid, "?"), "qty": qty_by_p[pid], "amount": sales_by_p[pid]}
@@ -991,13 +1009,21 @@ class PnlDetailView(APIView):
              for pid in cos_by_p],
             key=lambda x: -x["amount"],
         )
+        communal_items = sorted(
+            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid],
+              "unit_cost": communal_per_unit.get(pid, 0.0), "amount": communal_by_p[pid]}
+             for pid in communal_by_p if communal_by_p[pid] > 0],
+            key=lambda x: -x["amount"],
+        )
         total_sales = sum(sales_by_p.values())
         total_cos = sum(cos_by_p.values())
+        total_communal = sum(communal_by_p.values())
 
-        # Expenses — line items.
+        # Expenses — line items (categories flagged include_in_pnl=False excluded).
         exp_qs = (
             GeneralExpense.objects
             .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+            .exclude(category__include_in_pnl=False)
             .select_related("category").order_by("-occurred_at")
         )
         exp_items = [{
@@ -1037,7 +1063,8 @@ class PnlDetailView(APIView):
                 total_other_sal += amt
                 other_sal_items.append(row)
 
-        tan = total_cos + total_prod_sal          # Tan narxi = materials + production pay
+        # Tan narxi = materials + communal (gas/electricity) + production pay.
+        tan = total_cos + total_communal + total_prod_sal
         gp = total_sales - tan
         op = gp - total_exp
         net = op - total_other_sal
@@ -1049,6 +1076,8 @@ class PnlDetailView(APIView):
                 "total": tan,
                 "materials_total": total_cos,
                 "items": cos_items,
+                "communal_total": total_communal,
+                "communal_items": communal_items,
                 "salary_total": total_prod_sal,
                 "salary_items": prod_sal_items,
             },

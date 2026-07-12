@@ -30,6 +30,14 @@ class Product(TimestampedModel, ArchivableModel):
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0
     )
 
+    # Communal (gas / electricity) cost attributed per single unit produced, UZS.
+    # Folded into tan narxi (cost of goods) alongside materials and labour, so the
+    # P&L gross profit reflects utilities used to make the goods.
+    communal_cost_per_unit_uzs = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0,
+        help_text="Kommunal (gaz/svet) — 1 dona uchun, so'm. Tan narxiga qo'shiladi.",
+    )
+
     # Feature #24: cached cost price (tan narx) per unit — computed from recipe × ingredient prices.
     # Recomputed on ingredient purchase / recipe change via signal or nightly job.
     cost_price_uzs = models.DecimalField(

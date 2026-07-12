@@ -12,7 +12,9 @@ from .models import (
 
 @admin.register(ExpenseCategory)
 class ExpenseCategoryAdmin(admin.ModelAdmin):
-    list_display = ["name", "created_at"]
+    list_display = ["name", "include_in_pnl", "note", "created_at"]
+    list_editable = ["include_in_pnl"]
+    list_filter = ["include_in_pnl"]
     search_fields = ["name"]
     ordering = ["name"]
 
