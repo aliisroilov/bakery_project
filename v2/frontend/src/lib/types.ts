@@ -151,7 +151,8 @@ export interface Product {
   default_price_uzs: string;
   default_price_usd: string;
   production_salary_per_unit_uzs: string;
-  communal_cost_per_unit_uzs: string;
+  communal_cost_per_meshok_uzs: string;
+  other_cost_per_meshok_uzs: string;
   cost_price_uzs: string;
   cost_price_updated_at: string | null;
   meshok_size: string;

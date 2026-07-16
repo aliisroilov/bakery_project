@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3, Download, Search, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown,
   Copy, ChevronDown, ChevronRight, TrendingUp, DollarSign, Package, Warehouse,
@@ -347,9 +347,36 @@ function PnlChart({ rows }: { rows: (string | number)[][] }) {
 }
 
 // ─── COS tab ─────────────────────────────────────────────────────────────────
+// Inline numeric input that commits its value on blur / Enter.
+function CostInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => { setV(value); }, [value]);
+  return (
+    <input
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => { const nv = v.trim() === "" ? "0" : v; if (nv !== value) onCommit(nv); }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      inputMode="decimal"
+      className="w-28 h-8 px-2 rounded-md border bg-background text-sm text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-bakery-500"
+      placeholder="0"
+    />
+  );
+}
+
 function ProductCosCard({ product }: { product: any }) {
+  const qc = useQueryClient();
   const hasMargin = product.sale_price_uzs > 0;
   const isProfit = product.margin_per_unit >= 0;
+
+  const save = useMutation({
+    mutationFn: (patch: Record<string, string>) =>
+      api.patch(`/products/${product.product_id}/`, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reports", "cos"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
 
   return (
     <div className="rounded-xl border bg-card overflow-hidden">
@@ -440,6 +467,24 @@ function ProductCosCard({ product }: { product: any }) {
                   <td className="px-3 py-1.5 text-muted-foreground" colSpan={3}>Ish haqi (nonvoy)</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">
                     {formatMoney(String(Math.round(product.labour)), "UZS")}
+                  </td>
+                </tr>
+                <tr className="border-t">
+                  <td className="px-3 py-1.5 text-muted-foreground align-middle" colSpan={3}>Kommunal (gaz/svet) — 1 qop</td>
+                  <td className="px-3 py-1 text-right">
+                    <CostInput
+                      value={String(Math.round(product.communal ?? 0))}
+                      onCommit={(v) => save.mutate({ communal_cost_per_meshok_uzs: v })}
+                    />
+                  </td>
+                </tr>
+                <tr className="border-t">
+                  <td className="px-3 py-1.5 text-muted-foreground align-middle" colSpan={3}>Boshqa — 1 qop</td>
+                  <td className="px-3 py-1 text-right">
+                    <CostInput
+                      value={String(Math.round(product.other ?? 0))}
+                      onCommit={(v) => save.mutate({ other_cost_per_meshok_uzs: v })}
+                    />
                   </td>
                 </tr>
                 <tr className="border-t bg-muted font-semibold">
@@ -891,7 +936,7 @@ function GrossDailyTab() {
           )}
 
           <p className="text-xs text-muted-foreground">
-            Tan narxi = materiallar + kommunal (gaz/svet) + nonvoy ish haqi · Oylik to'lovlar = boshqa xodimlar.
+            Tan narxi = materiallar + kommunal + boshqa + nonvoy ish haqi · Oylik to'lovlar = boshqa xodimlar.
           </p>
 
           {/* Cross-tab: clients × products */}
@@ -1237,6 +1282,15 @@ function CosDetail({ cos }: { cos: any }) {
           rows={(cos.communal_items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
           foot={["Jami", "", "", <Money v={cos.communal_total} />]}
           empty="Kommunal xarajat yo'q"
+        />
+      )}
+      {(cos.other_total ?? 0) > 0 && (
+        <DetailTable
+          title={`Boshqa — ${fm(cos.other_total)}`}
+          head={["Mahsulot", "Miqdor", "1 dona", "Summa"]}
+          rows={(cos.other_items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
+          foot={["Jami", "", "", <Money v={cos.other_total} />]}
+          empty="Boshqa xarajat yo'q"
         />
       )}
       <div>
@@ -1617,7 +1671,7 @@ export function ReportsPage() {
 
           {(active === "pnl_daily" || active === "gross_overall") && (
             <p className="text-xs text-muted-foreground -mt-1">
-              <span className="font-medium text-foreground">Tan narxi</span> = materiallar + kommunal + nonvoy ish haqi ·{" "}
+              <span className="font-medium text-foreground">Tan narxi</span> = materiallar + kommunal + boshqa + nonvoy ish haqi ·{" "}
               <span className="font-medium text-foreground">Oylik</span> = boshqa xodimlar (menejer, haydovchi…).{" "}
               {active === "gross_overall" && "Har bir raqamni bosib tarkibini oching."}
             </p>

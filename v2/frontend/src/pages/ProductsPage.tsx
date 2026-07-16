@@ -267,7 +267,8 @@ function ProductModal({
   const [defaultUzs, setDefaultUzs] = useState(product?.default_price_uzs ?? "0");
   const [meshokSize, setMeshokSize] = useState(product?.meshok_size ?? "160");
   const [salary, setSalary] = useState(product?.production_salary_per_unit_uzs ?? "0");
-  const [communal, setCommunal] = useState(product?.communal_cost_per_unit_uzs ?? "0");
+  const [communal, setCommunal] = useState(product?.communal_cost_per_meshok_uzs ?? "0");
+  const [other, setOther] = useState(product?.other_cost_per_meshok_uzs ?? "0");
   const [lines, setLines] = useState<ExistingRecipeLine[]>([
     { key: crypto.randomUUID(), ingredient: "", amount_per_meshok: "" },
   ]);
@@ -314,7 +315,8 @@ function ProductModal({
           default_price_uzs: defaultUzs,
           meshok_size: meshokSize,
           production_salary_per_unit_uzs: salary,
-          communal_cost_per_unit_uzs: communal,
+          communal_cost_per_meshok_uzs: communal,
+          other_cost_per_meshok_uzs: other,
         });
         // Sync recipe: delete removed lines, update/create others.
         const deletions = lines.filter((l) => l.deleted && l.id);
@@ -341,7 +343,8 @@ function ProductModal({
         default_price_uzs: defaultUzs,
         meshok_size: meshokSize,
         production_salary_per_unit_uzs: salary,
-        communal_cost_per_unit_uzs: communal,
+        communal_cost_per_meshok_uzs: communal,
+        other_cost_per_meshok_uzs: other,
       });
       const productId = res.data.id;
       await Promise.all(
@@ -425,7 +428,7 @@ function ProductModal({
                 inputMode="decimal"
               />
             </Field>
-            <Field label="Kommunal 1 dona (gaz/svet)">
+            <Field label="Kommunal 1 qop (gaz/svet)">
               <input
                 className="w-full h-10 px-3 rounded-lg border bg-background text-sm tabular-nums"
                 value={communal}
@@ -433,11 +436,19 @@ function ProductModal({
                 inputMode="decimal"
               />
             </Field>
+            <Field label="Boshqa 1 qop">
+              <input
+                className="w-full h-10 px-3 rounded-lg border bg-background text-sm tabular-nums"
+                value={other}
+                onChange={(e) => setOther(e.target.value)}
+                inputMode="decimal"
+              />
+            </Field>
           </div>
           <p className="text-xs text-muted-foreground -mt-1">
-            Kommunal (gaz/svet) — 1 dona uchun, so'm. Tan narxiga qo'shiladi. Ikkilanib
-            hisoblanmasligi uchun <b>Kommunal</b> xarajat kategoriyasini admin panelda P&L'dan
-            chiqarib qo'ying.
+            Kommunal (gaz/svet) va Boshqa — <b>1 qop (meshok)</b> uchun, so'm. Tan narxiga
+            qo'shiladi. Ikkilanib hisoblanmasligi uchun <b>Kommunal</b> xarajat kategoriyasini
+            admin panelda P&L'dan chiqarib qo'ying.
           </p>
 
           <div className="rounded-xl border bg-muted/30 p-3 sm:p-4">
