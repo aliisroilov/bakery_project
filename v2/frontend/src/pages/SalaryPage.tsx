@@ -69,7 +69,11 @@ interface EmployeeSummary {
   paid_advance: string;
   paid_bonus: string;
   paid_deduction: string;
-  remaining: string;
+  // Running balance (true amount owed), NOT scoped to the date filter:
+  //   remaining = carryover + earned_total − (salary + advance + deduction paid since reset)
+  carryover: string;        // opening balance carried from the last period close
+  earned_total: string;     // salary accrued since reset_date (all-time)
+  remaining: string;        // what we actually still owe right now
   last_payment: {
     amount: string;
     currency: "UZS" | "USD";
@@ -185,14 +189,17 @@ export function SalaryPage() {
 
   const totals = useMemo(() => {
     const rows = summary?.results ?? [];
+    // Qoldiq = true running balance owed (carryover + earned since reset − paid),
+    // independent of the date filter — this is the real outstanding liability.
     const totalRemaining = rows.reduce((a, r) => a + parseFloat(r.remaining || "0"), 0);
-    // Period payments (salary + advance + bonus paid within the date filter)
+    // "To'langan" = salary + advance paid within the date filter. Bonus is a
+    // discretionary extra (not salary owed) and is excluded here so this total
+    // reconciles with the per-employee cards and the chart.
     const totalPaid = rows.reduce(
       (a, r) =>
         a +
         parseFloat(r.paid_salary || "0") +
-        parseFloat(r.paid_advance || "0") +
-        parseFloat(r.paid_bonus || "0"),
+        parseFloat(r.paid_advance || "0"),
       0,
     );
     // "Hisoblangan" = salary accrued within the selected period (date_from–date_to).
@@ -272,6 +279,7 @@ export function SalaryPage() {
           value={formatMoney(totals.totalRemaining, "UZS")}
           tone={totals.totalRemaining > 0 ? "warning" : "success"}
           icon={<Wallet className="size-4" />}
+          subtitle="Jami qarz — boshlang'ich qoldiq bilan"
         />
       </div>
 
@@ -515,13 +523,13 @@ function EmployeeCard({
 
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div className="rounded-lg bg-muted/40 p-2">
-          <div className="text-muted-foreground">Hisoblangan</div>
+          <div className="text-muted-foreground">Hisoblangan <span className="opacity-70">(davr)</span></div>
           <div className="font-semibold tabular-nums mt-0.5">
             {formatMoney(earned, "UZS")}
           </div>
         </div>
         <div className="rounded-lg bg-muted/40 p-2">
-          <div className="text-muted-foreground">To'langan</div>
+          <div className="text-muted-foreground">To'langan <span className="opacity-70">(davr)</span></div>
           <div className="font-semibold tabular-nums mt-0.5">
             {formatMoney(paid, "UZS")}
           </div>
@@ -535,12 +543,29 @@ function EmployeeCard({
                 : "bg-emerald-500/10 text-emerald-800"
           }`}
         >
-          <div className="opacity-80">Qoldiq</div>
+          <div className="opacity-80">Qoldiq <span className="opacity-70">(jami)</span></div>
           <div className="font-semibold tabular-nums mt-0.5">
             {formatMoney(remaining, "UZS")}
           </div>
         </div>
       </div>
+
+      {/* Carryover from the last period close explains why the total Qoldiq is
+          not simply (period earned − period paid). */}
+      {parseFloat(employee.carryover || "0") !== 0 && (
+        <div className="text-xs text-muted-foreground -mt-1">
+          Boshlang'ich qarz (oldingi davrdan):{" "}
+          <span
+            className={`font-medium ${
+              parseFloat(employee.carryover) < 0
+                ? "text-emerald-700"
+                : "text-amber-700"
+            }`}
+          >
+            {formatMoney(employee.carryover, "UZS")}
+          </span>
+        </div>
+      )}
 
       {employee.last_payment && (
         <div className="text-xs text-muted-foreground">
@@ -625,11 +650,10 @@ function PaymentModal({
   );
   const [kind, setKind] = useState<Kind>("salary");
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
-  const [amount, setAmount] = useState(
-    preselectUser && parseFloat(preselectUser.remaining) > 0
-      ? preselectUser.remaining
-      : "",
-  );
+  // Start empty and let the operator type the amount actually being paid.
+  // (We deliberately do NOT prefill the full outstanding balance — it can now be
+  // very large, e.g. carried debt of 100M+, and a stray Enter would post it.)
+  const [amount, setAmount] = useState("");
   const [accountId, setAccountId] = useState<number | "">("");
   const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr());
   const [periodStart, setPeriodStart] = useState("");

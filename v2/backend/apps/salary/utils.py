@@ -15,12 +15,20 @@ from datetime import date, datetime
 
 
 def _parse_date(d) -> date | None:
-    """Accept a date object, a 'YYYY-MM-DD' string, or None."""
+    """Accept a date object, a 'YYYY-MM-DD' string, None, or an empty string.
+
+    An empty/blank string (a cleared date input arriving as ?date_from=) is
+    treated as "no bound" instead of raising ValueError — otherwise the whole
+    salary summary 500s until the field is re-filled.
+    """
     if d is None:
         return None
     if isinstance(d, date):
         return d
-    return datetime.strptime(str(d), "%Y-%m-%d").date()
+    s = str(d).strip()
+    if not s:
+        return None
+    return datetime.strptime(s, "%Y-%m-%d").date()
 
 
 def _production_contributions(user, d_from=None, d_to=None, reset_date=None):
@@ -116,6 +124,11 @@ def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Dec
     today = date.today()
     effective_from = d_from or today
     effective_to = d_to or today
+    # Salary only accrues for days that have actually elapsed — never bill a
+    # future end date. (The UI caps date_to at today, but a manually chosen
+    # future date must not inflate earned/owed.)
+    if effective_to > today:
+        effective_to = today
     # Apply the reset floor: nothing accrues before it.
     if reset and reset > effective_from:
         effective_from = reset

@@ -15,7 +15,7 @@ from apps.production.models import Production
 
 from .models import PaymentKind, SalaryPayment, SalaryRate
 from .serializers import SalaryPaymentSerializer, SalaryRateSerializer
-from .utils import calculate_earned_period
+from .utils import calculate_earned, calculate_earned_period
 
 
 class SalaryRateViewSet(viewsets.ModelViewSet):
@@ -36,6 +36,30 @@ KIND_TO_KASSA_KIND = {
     "bonus": KassaTransactionType.BONUS,
     "deduction": KassaTransactionType.ADJUSTMENT,  # negative adjustment
 }
+
+
+def _cash_delta(kind: str, amount) -> Decimal:
+    """Cash effect on the kassa of a salary payment.
+
+    Paying an employee (salary / advance / bonus) takes cash OUT of the till, so
+    the delta is negative. A deduction (ushlab qolish) is a NON-CASH reduction of
+    what we owe the employee — no money changes hands — so it must leave the
+    kassa untouched (previously it wrongly ADDED phantom cash to the balance).
+    """
+    if kind == "deduction":
+        return Decimal("0")
+    return -Decimal(amount)
+
+
+def _bump_account_balance(account, currency: str, delta) -> None:
+    """Apply *delta* to the cached per-currency balance via an F() expression."""
+    if delta == 0:
+        return
+    if currency == "UZS":
+        account.balance_uzs = F("balance_uzs") + delta
+    else:
+        account.balance_usd = F("balance_usd") + delta
+    account.save(update_fields=["balance_uzs", "balance_usd"])
 
 
 class SalaryPaymentViewSet(viewsets.ModelViewSet):
@@ -60,14 +84,11 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         with transaction.atomic():
             payment = serializer.save(created_by=self.request.user)
+            delta = _cash_delta(payment.kind, payment.amount)
+            if delta == 0:
+                return  # deduction: non-cash, no kassa movement, no ledger row
             account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
-            sign = -1 if payment.kind != "deduction" else 1  # paying out is negative for kassa
-            delta = payment.amount * sign
-            if payment.currency == "UZS":
-                account.balance_uzs = F("balance_uzs") + delta
-            else:
-                account.balance_usd = F("balance_usd") + delta
-            account.save(update_fields=["balance_uzs", "balance_usd"])
+            _bump_account_balance(account, payment.currency, delta)
             KassaTransaction.objects.create(
                 account=payment.account,
                 kind=KIND_TO_KASSA_KIND.get(payment.kind, KassaTransactionType.SALARY),
@@ -82,57 +103,53 @@ class SalaryPaymentViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         with transaction.atomic():
+            # Capture the OLD cash effect from the pre-save field values. Most
+            # payments (V1-synced) have no linked KassaTransaction, but their
+            # cash-out IS already baked into the account's absolute balance, so
+            # the balance is always maintained incrementally from the payment
+            # fields (NOT from the ledger row, which may not exist).
             old = serializer.instance
-            old_sign = -1 if old.kind != "deduction" else 1
-            old_delta = old.amount * old_sign
+            old_delta = _cash_delta(old.kind, old.amount)
             old_currency = old.currency
             old_account_id = old.account_id
 
             payment = serializer.save()
+            new_delta = _cash_delta(payment.kind, payment.amount)
 
-            new_sign = -1 if payment.kind != "deduction" else 1
-            new_delta = payment.amount * new_sign
+            # Reverse the old effect, then apply the new one (handles a changed
+            # account, currency, amount, or kind — including to/from deduction,
+            # whose cash delta is 0).
+            if old_delta != 0:
+                old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
+                _bump_account_balance(old_account, old_currency, -old_delta)
+            if new_delta != 0:
+                new_account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
+                _bump_account_balance(new_account, payment.currency, new_delta)
 
-            # Reverse old transaction from old account.
-            old_account = KassaAccount.objects.select_for_update().get(pk=old_account_id)
-            if old_currency == "UZS":
-                old_account.balance_uzs = F("balance_uzs") - old_delta
-            else:
-                old_account.balance_usd = F("balance_usd") - old_delta
-            old_account.save(update_fields=["balance_uzs", "balance_usd"])
-
-            # Apply new transaction to (possibly new) account.
-            new_account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
-            if payment.currency == "UZS":
-                new_account.balance_uzs = F("balance_uzs") + new_delta
-            else:
-                new_account.balance_usd = F("balance_usd") + new_delta
-            new_account.save(update_fields=["balance_uzs", "balance_usd"])
-
-            # Update the linked KassaTransaction record if it exists.
-            KassaTransaction.objects.filter(
-                reference_model="salary.SalaryPayment",
-                reference_id=payment.id,
-            ).update(
-                account=payment.account,
-                kind=KIND_TO_KASSA_KIND.get(payment.kind, KassaTransactionType.SALARY),
-                currency=payment.currency,
-                amount=new_delta,
-                occurred_at=payment.occurred_at,
-                note=f"{payment.get_kind_display()} · {payment.user.display_name}",
+            # Keep the linked ledger row (if any) consistent with the new state;
+            # drop it when the payment becomes a non-cash deduction.
+            linked = KassaTransaction.objects.filter(
+                reference_model="salary.SalaryPayment", reference_id=payment.id,
             )
+            if new_delta != 0:
+                linked.update(
+                    account=payment.account,
+                    kind=KIND_TO_KASSA_KIND.get(payment.kind, KassaTransactionType.SALARY),
+                    currency=payment.currency,
+                    amount=new_delta,
+                    occurred_at=payment.occurred_at,
+                    note=f"{payment.get_kind_display()} · {payment.user.display_name}",
+                )
+            else:
+                linked.delete()
 
     def perform_destroy(self, instance):
         with transaction.atomic():
-            sign = -1 if instance.kind != "deduction" else 1
-            delta = instance.amount * sign
-            account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
-            # Reverse the original deduction from kassa.
-            if instance.currency == "UZS":
-                account.balance_uzs = F("balance_uzs") - delta
-            else:
-                account.balance_usd = F("balance_usd") - delta
-            account.save(update_fields=["balance_uzs", "balance_usd"])
+            delta = _cash_delta(instance.kind, instance.amount)
+            # Reverse the payment's cash effect (0 for a non-cash deduction).
+            if delta != 0:
+                account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)
+                _bump_account_balance(account, instance.currency, -delta)
             KassaTransaction.objects.filter(
                 reference_model="salary.SalaryPayment",
                 reference_id=instance.id,
@@ -253,31 +270,52 @@ class SalaryEmployeeSummaryView(APIView):
         results = []
         for u in users:
             rate_obj = getattr(u, "salary_rate", None)
-            # Per-period model — each month/range stands alone. Everything below
-            # is scoped to [date_from, date_to]. "Hisoblangan" = earned in range.
+            reset = getattr(rate_obj, "reset_date", None) if rate_obj else None
+
+            # ── Period figures (informational) — scoped to [date_from, date_to].
+            # The "Hisoblangan"/"To'langan" cards answer "activity in this range";
+            # they are NOT the running balance (see remaining below).
             earned_period = (
                 calculate_earned_period(u, rate_obj, date_from, date_to)
                 if rate_obj
                 else Decimal("0.00")
             )
-
-            # Payments made within the selected range. Settled payments are kept
-            # as history but excluded from the running balance (period close).
-            payments = SalaryPayment.objects.filter(user=u, settled=False)
+            period_pay = SalaryPayment.objects.filter(user=u, settled=False)
             if date_from:
-                payments = payments.filter(occurred_at__date__gte=date_from)
+                period_pay = period_pay.filter(occurred_at__date__gte=date_from)
             if date_to:
-                payments = payments.filter(occurred_at__date__lte=date_to)
+                period_pay = period_pay.filter(occurred_at__date__lte=date_to)
             by_kind = {k: Decimal("0.00") for k in ["salary", "advance", "bonus", "deduction"]}
-            for row in payments.values("kind").annotate(total=Sum("amount")):
+            for row in period_pay.values("kind").annotate(total=Sum("amount")):
                 by_kind[row["kind"]] = row["total"] or Decimal("0.00")
 
-            # What we still owe for THIS range = earned − (salary + advance +
-            # deduction) paid in range. Bonus is discretionary, doesn't reduce debt.
-            paid_out = by_kind["salary"] + by_kind["advance"] + by_kind["deduction"]
-            remaining = earned_period - paid_out
+            # ── Running balance = the TRUE amount owed. Deliberately NOT scoped to
+            # the date filter, so unpaid balances don't vanish at month rollover.
+            #
+            # reset_date is the hard boundary: `initial_balance` is the opening
+            # balance snapshotted at the last period close, and salary accrues
+            # fresh from reset_date forward. Everything before reset is considered
+            # closed (folded into initial_balance), so we only count unsettled
+            # payments dated on/after reset. This mirrors v1's `earned +
+            # initial_balance` and stops carried debt (≈182M UZS live) from being
+            # dropped from every total.
+            carryover = Decimal(rate_obj.initial_balance or 0) if rate_obj else Decimal("0.00")
+            earned_total = calculate_earned(u, rate_obj) if rate_obj else Decimal("0.00")
+            owed_pay = SalaryPayment.objects.filter(user=u, settled=False).exclude(kind="bonus")
+            if reset:
+                owed_pay = owed_pay.filter(occurred_at__date__gte=reset)
+            # salary + advance + deduction all reduce what we owe (a deduction is a
+            # non-cash withholding); bonus is discretionary and excluded above.
+            paid_total = owed_pay.aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
+            remaining = carryover + earned_total - paid_total
 
-            last = payments.order_by("-occurred_at").first()
+            # "Oxirgi to'lov" = most recent payment that still counts (unsettled),
+            # independent of the date filter.
+            last = (
+                SalaryPayment.objects.filter(user=u, settled=False)
+                .order_by("-occurred_at")
+                .first()
+            )
 
             rate_data = None
             if rate_obj:
@@ -307,7 +345,10 @@ class SalaryEmployeeSummaryView(APIView):
                 "paid_advance": str(by_kind["advance"]),
                 "paid_bonus": str(by_kind["bonus"]),
                 "paid_deduction": str(by_kind["deduction"]),
-                "remaining": str(remaining),
+                # Running balance (true amount owed) and its components.
+                "carryover": str(carryover),        # opening balance at last reset
+                "earned_total": str(earned_total),  # earned since reset (all-time)
+                "remaining": str(remaining),         # carryover + earned_total − paid
                 "last_payment": (
                     {
                         "amount": str(last.amount),
