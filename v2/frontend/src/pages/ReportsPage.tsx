@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3, Download, Search, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown,
   Copy, ChevronDown, ChevronRight, TrendingUp, DollarSign, Package, Warehouse,
@@ -347,9 +347,37 @@ function PnlChart({ rows }: { rows: (string | number)[][] }) {
 }
 
 // ─── COS tab ─────────────────────────────────────────────────────────────────
+// Compact inline number editor — styled to blend with the plain cost rows
+// (looks like text until you hover/focus); commits on blur / Enter.
+function CostInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => { setV(value); }, [value]);
+  return (
+    <input
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => { const nv = v.trim() === "" ? "0" : v; if (nv !== value) onCommit(nv); }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      inputMode="decimal"
+      placeholder="0"
+      className="w-24 text-right tabular-nums text-sm bg-transparent rounded px-1 py-0.5 border border-transparent hover:border-border focus:border-bakery-500 focus:bg-background focus:outline-none"
+    />
+  );
+}
+
 function ProductCosCard({ product }: { product: any }) {
+  const qc = useQueryClient();
   const hasMargin = product.sale_price_uzs > 0;
   const isProfit = product.margin_per_unit >= 0;
+
+  const save = useMutation({
+    mutationFn: (patch: Record<string, string>) =>
+      api.patch(`/products/${product.product_id}/`, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["reports", "cos"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
+    },
+  });
 
   return (
     <div className="rounded-xl border bg-card overflow-hidden">
@@ -450,14 +478,15 @@ function ProductCosCard({ product }: { product: any }) {
                     </td>
                   </tr>
                 )}
-                {(product.other ?? 0) > 0 && (
-                  <tr className="border-t">
-                    <td className="px-3 py-1.5 text-muted-foreground" colSpan={3}>Boshqa</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
-                      {formatMoney(String(Math.round(product.other)), "UZS")}
-                    </td>
-                  </tr>
-                )}
+                <tr className="border-t">
+                  <td className="px-3 py-1.5 text-muted-foreground" colSpan={3}>Boshqa</td>
+                  <td className="px-3 py-1 text-right">
+                    <CostInput
+                      value={String(Math.round(product.other ?? 0))}
+                      onCommit={(v) => save.mutate({ other_cost_per_meshok_uzs: v })}
+                    />
+                  </td>
+                </tr>
                 <tr className="border-t bg-muted font-semibold">
                   <td className="px-3 py-2" colSpan={3}>Jami tan narxi / qop</td>
                   <td className="px-3 py-2 text-right tabular-nums">
