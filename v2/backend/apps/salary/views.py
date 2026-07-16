@@ -289,17 +289,20 @@ class SalaryEmployeeSummaryView(APIView):
             for row in period_pay.values("kind").annotate(total=Sum("amount")):
                 by_kind[row["kind"]] = row["total"] or Decimal("0.00")
 
-            # ── Running balance = the TRUE amount owed. Deliberately NOT scoped to
-            # the date filter, so unpaid balances don't vanish at month rollover.
+            # ── Running balance = the TRUE amount owed, computed purely from the
+            # clean post-reset ledger. NOT scoped to the date filter, so unpaid
+            # balances don't vanish at month rollover.
             #
-            # reset_date is the hard boundary: `initial_balance` is the opening
-            # balance snapshotted at the last period close, and salary accrues
-            # fresh from reset_date forward. Everything before reset is considered
-            # closed (folded into initial_balance), so we only count unsettled
-            # payments dated on/after reset. This mirrors v1's `earned +
-            # initial_balance` and stops carried debt (≈182M UZS live) from being
-            # dropped from every total.
-            carryover = Decimal(rate_obj.initial_balance or 0) if rate_obj else Decimal("0.00")
+            # reset_date is the hard boundary: everything before it is closed
+            # (its payments are settled and its production isn't counted), so
+            # since the reset earned ≈ paid and the outstanding balance is small.
+            #
+            # NOTE: SalaryRate.initial_balance (the "loan"/boshlang'ich qarz field)
+            # is deliberately NOT added. Its stored values were unreliable — mostly
+            # equal to each worker's already-PAID history — and inflated Qoldiq by
+            # ~25x (e.g. Umarxon 3.4M → 158M). The field stays on the model/admin
+            # for future use, but the balance is derived only from real earnings
+            # and payments recorded after the reset.
             earned_total = calculate_earned(u, rate_obj) if rate_obj else Decimal("0.00")
             owed_pay = SalaryPayment.objects.filter(user=u, settled=False).exclude(kind="bonus")
             if reset:
@@ -307,7 +310,8 @@ class SalaryEmployeeSummaryView(APIView):
             # salary + advance + deduction all reduce what we owe (a deduction is a
             # non-cash withholding); bonus is discretionary and excluded above.
             paid_total = owed_pay.aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
-            remaining = carryover + earned_total - paid_total
+            remaining = earned_total - paid_total
+            carryover = Decimal(rate_obj.initial_balance or 0) if rate_obj else Decimal("0.00")
 
             # "Oxirgi to'lov" = most recent payment that still counts (unsettled),
             # independent of the date filter.

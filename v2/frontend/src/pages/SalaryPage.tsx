@@ -279,7 +279,7 @@ export function SalaryPage() {
           value={formatMoney(totals.totalRemaining, "UZS")}
           tone={totals.totalRemaining > 0 ? "warning" : "success"}
           icon={<Wallet className="size-4" />}
-          subtitle="Jami qarz — boshlang'ich qoldiq bilan"
+          subtitle="Reset sanadan beri (hisoblangan − to'langan)"
         />
       </div>
 
@@ -549,23 +549,6 @@ function EmployeeCard({
           </div>
         </div>
       </div>
-
-      {/* Carryover from the last period close explains why the total Qoldiq is
-          not simply (period earned − period paid). */}
-      {parseFloat(employee.carryover || "0") !== 0 && (
-        <div className="text-xs text-muted-foreground -mt-1">
-          Boshlang'ich qarz (oldingi davrdan):{" "}
-          <span
-            className={`font-medium ${
-              parseFloat(employee.carryover) < 0
-                ? "text-emerald-700"
-                : "text-amber-700"
-            }`}
-          >
-            {formatMoney(employee.carryover, "UZS")}
-          </span>
-        </div>
-      )}
 
       {employee.last_payment && (
         <div className="text-xs text-muted-foreground">
