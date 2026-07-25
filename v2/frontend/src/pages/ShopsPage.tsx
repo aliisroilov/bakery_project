@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Store, AlertTriangle, Search, Plus, Pencil, Tag, Archive, ArchiveRestore } from "lucide-react";
+import { Store, AlertTriangle, Search, Plus, Pencil, Tag, Archive, ArchiveRestore, History } from "lucide-react";
 import { api } from "../lib/api";
 import type { Paginated, Region, Shop } from "../lib/types";
-import { formatMoney } from "../lib/utils";
+import { formatMoney, fmtDMY } from "../lib/utils";
 
 interface DriverOption {
   id: number;
@@ -17,6 +17,7 @@ export function ShopsPage() {
   const [onlyOverLimit, setOnlyOverLimit] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Shop | null>(null);
+  const [timelineShop, setTimelineShop] = useState<Shop | null>(null);
 
   const { data, isLoading } = useQuery<Paginated<Shop>>({
     queryKey: ["shops", { search, over_limit: onlyOverLimit }],
@@ -128,7 +129,14 @@ export function ShopsPage() {
                 <td className="px-4 py-3 text-muted-foreground">
                   {s.assigned_driver_name || "—"}
                 </td>
-                <td className="px-4 py-3 text-right">
+                <td className="px-4 py-3 text-right whitespace-nowrap">
+                  <button
+                    onClick={() => setTimelineShop(s)}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mr-3"
+                    title="Qarz tarixi (kunlik)"
+                  >
+                    <History className="size-3.5" /> Qarz tarixi
+                  </button>
                   <button
                     onClick={() => setEditing(s)}
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
@@ -196,12 +204,21 @@ export function ShopsPage() {
                 )}
               </div>
             </Link>
-            <button
-              onClick={() => setEditing(s)}
-              className="shrink-0 inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-muted-foreground hover:text-foreground"
-            >
-              <Pencil className="size-3.5" />
-            </button>
+            <div className="shrink-0 flex flex-col gap-1">
+              <button
+                onClick={() => setTimelineShop(s)}
+                title="Qarz tarixi"
+                className="inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-muted-foreground hover:text-foreground"
+              >
+                <History className="size-3.5" />
+              </button>
+              <button
+                onClick={() => setEditing(s)}
+                className="inline-flex items-center gap-1 h-8 px-2 rounded-md border text-xs text-muted-foreground hover:text-foreground"
+              >
+                <Pencil className="size-3.5" />
+              </button>
+            </div>
           </div>
         ))}
         {!isLoading && data?.results.length === 0 && (
@@ -212,6 +229,9 @@ export function ShopsPage() {
       </div>
       {creating && <ShopModal onClose={() => setCreating(false)} />}
       {editing && <ShopModal shop={editing} onClose={() => setEditing(null)} />}
+      {timelineShop && (
+        <DebtTimelineModal shop={timelineShop} onClose={() => setTimelineShop(null)} />
+      )}
     </div>
   );
 }
@@ -432,6 +452,98 @@ function ShopModal({ shop, onClose }: { shop?: Shop; onClose: () => void }) {
               {save.isPending ? "Saqlanmoqda…" : "Saqlash"}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Per-shop debt timeline — day-by-day how the loan grew/shrank (#4).
+function DebtTimelineModal({ shop, onClose }: { shop: Shop; onClose: () => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6);
+    return d.toISOString().slice(0, 10);
+  });
+  const [to, setTo] = useState(today);
+
+  const { data, isFetching } = useQuery<{
+    shop: string;
+    current_balance_uzs: number;
+    days: { date: string; delivered: number; paid: number; net: number; balance_after: number }[];
+  }>({
+    queryKey: ["shops", "debt-timeline", shop.id, from, to],
+    queryFn: async () =>
+      (await api.get(`/shops/${shop.id}/debt-timeline/?date_from=${from}&date_to=${to}`)).data,
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div
+        className="bg-card rounded-2xl border shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="px-5 py-4 border-b flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xs text-muted-foreground">Qarz tarixi (kunlik)</div>
+            <h3 className="font-semibold text-lg flex items-center gap-2">
+              <History className="size-5 text-bakery-500" /> {shop.name}
+            </h3>
+            <div className="text-sm mt-1">
+              Hozirgi qoldiq:{" "}
+              <span className="font-semibold tabular-nums">
+                {formatMoney(String(Math.round(data?.current_balance_uzs ?? parseFloat(shop.loan_balance_uzs))), "UZS")}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-lg border px-2 py-1 text-sm hover:bg-muted">✕</button>
+        </header>
+
+        <div className="px-5 py-3 border-b flex items-center gap-2 text-sm">
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-9 px-2 rounded-lg border bg-background text-sm" />
+          <span className="text-muted-foreground">→</span>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-9 px-2 rounded-lg border bg-background text-sm" />
+        </div>
+
+        <div className="overflow-auto p-5">
+          {isFetching && !data && <div className="py-10 text-center text-muted-foreground text-sm">Yuklanmoqda…</div>}
+          {data && data.days.length === 0 && (
+            <div className="py-10 text-center text-muted-foreground text-sm">Bu davrda o'zgarish yo'q.</div>
+          )}
+          {data && data.days.length > 0 && (
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">Sana</th>
+                    <th className="px-3 py-2 text-right font-medium">O'zgarish</th>
+                    <th className="px-3 py-2 text-right font-medium">Qoldiq</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.days.map((r) => (
+                    <tr key={r.date} className="border-t">
+                      <td className="px-3 py-2 text-left tabular-nums whitespace-nowrap">{fmtDMY(r.date)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        <span className={r.net > 0 ? "text-destructive" : r.net < 0 ? "text-emerald-700" : "text-muted-foreground"}>
+                          {r.net > 0 ? "+" : ""}{formatMoney(String(Math.round(r.net)), "UZS")}
+                        </span>
+                        <div className="text-[11px] text-muted-foreground">
+                          {r.delivered > 0 && <>yetkazma +{Math.round(r.delivered).toLocaleString()}</>}
+                          {r.delivered > 0 && r.paid > 0 && " · "}
+                          {r.paid > 0 && <>to'lov −{Math.round(r.paid).toLocaleString()}</>}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums font-medium">
+                        {formatMoney(String(Math.round(r.balance_after)), "UZS")}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>

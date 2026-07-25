@@ -129,6 +129,78 @@ class ShopViewSet(viewsets.ModelViewSet):
         shop.unarchive()
         return Response(ShopListSerializer(shop).data)
 
+    @action(detail=True, methods=["get"], url_path="debt-timeline")
+    def debt_timeline(self, request, pk=None):
+        """GET /shops/{id}/debt-timeline/?date_from=&date_to= — day-by-day debt
+        history (UZS). Debt rises with delivered order value and falls with
+        payments (amount + discount). Running balance is anchored to the shop's
+        current loan_balance and computed backward, so recent days are exact even
+        without a stored ledger."""
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+        from django.db.models import DecimalField, Sum
+        from django.db.models.functions import TruncDate
+        from apps.finance.models import Payment
+        from apps.orders.models import OrderItem
+
+        shop = self.get_object()
+        today = timezone.localdate()
+        try:
+            df = datetime.strptime(request.query_params["date_from"], "%Y-%m-%d").date() \
+                if request.query_params.get("date_from") else today - timedelta(days=6)
+            dt = datetime.strptime(request.query_params["date_to"], "%Y-%m-%d").date() \
+                if request.query_params.get("date_to") else today
+        except ValueError:
+            return Response({"detail": "Invalid date. Use YYYY-MM-DD."}, status=400)
+
+        current = float(shop.loan_balance_uzs)
+        daily = defaultdict(lambda: {"delivered": 0.0, "paid": 0.0})
+
+        # Delivered order value per day (debt added on delivery).
+        oi = (
+            OrderItem.objects
+            .filter(order__shop=shop, order__currency="UZS")
+            .exclude(order__status="cancelled")
+            .values("order__order_date")
+            .annotate(v=Sum(F("delivered_quantity") * F("unit_price"), output_field=DecimalField()))
+        )
+        for r in oi:
+            daily[r["order__order_date"]]["delivered"] += float(r["v"] or 0)
+        # Payments per day (debt reduced by amount + discount).
+        pay = (
+            Payment.objects.filter(shop=shop, currency="UZS")
+            .annotate(d=TruncDate("received_at"))
+            .values("d")
+            .annotate(a=Sum("amount"), disc=Sum("discount"))
+        )
+        for r in pay:
+            daily[r["d"]]["paid"] += float(r["a"] or 0) + float(r["disc"] or 0)
+
+        # Walk days newest→oldest, anchoring the running balance to `current`.
+        running = current
+        rows = []
+        for day in sorted(daily.keys(), reverse=True):
+            delivered = round(daily[day]["delivered"], 2)
+            paid = round(daily[day]["paid"], 2)
+            net = round(delivered - paid, 2)
+            balance_after = round(running, 2)
+            running -= net
+            if df <= day <= dt:
+                rows.append({
+                    "date": day.isoformat(),
+                    "delivered": delivered,
+                    "paid": paid,
+                    "net": net,
+                    "balance_after": balance_after,
+                })
+        return Response({
+            "shop": shop.name,
+            "date_from": df.isoformat(),
+            "date_to": dt.isoformat(),
+            "current_balance_uzs": round(current, 2),
+            "days": rows,  # newest first
+        })
+
     @action(detail=True, methods=["get", "post"])
     def prices(self, request, pk=None):
         """GET → list per-shop prices. POST → upsert a price for (product, currency)."""

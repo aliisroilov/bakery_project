@@ -14,8 +14,11 @@ import {
   Repeat,
   Pencil,
   Info,
+  Wheat,
+  Banknote,
   X,
 } from "lucide-react";
+import { PurchaseModal, type Ingredient } from "./InventoryPage";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
@@ -191,6 +194,8 @@ export function KassaPage() {
   const [chiqimOpen, setChiqimOpen] = useState(false);
   const [handoverOpen, setHandoverOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
+  const [buyOpen, setBuyOpen] = useState(false);
+  const [salaryOpen, setSalaryOpen] = useState(false);
   const [editTx, setEditTx] = useState<KassaTransaction | null>(null);
   // Transaction detail: desktop hover popover + mobile tap-to-expand.
   const [hoverTx, setHoverTx] = useState<{ tx: KassaTransaction; top: number; right: number } | null>(null);
@@ -205,6 +210,14 @@ export function KassaPage() {
     queryKey: ["kassa", "accounts"],
     queryFn: async () =>
       (await api.get<Paginated<KassaAccount>>("/finance/accounts/")).data,
+  });
+
+  // For "Xomashyo xarid" from the kassa page — reuses the inventory PurchaseModal.
+  const { data: ingredients } = useQuery<Paginated<Ingredient>>({
+    queryKey: ["inventory", "ingredients", "false"],
+    queryFn: async () =>
+      (await api.get<Paginated<Ingredient>>("/inventory/ingredients/?archived=false")).data,
+    enabled: buyOpen,
   });
 
   const { data: txs } = useQuery<Paginated<KassaTransaction>>({
@@ -255,6 +268,18 @@ export function KassaPage() {
             className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-destructive text-destructive hover:bg-destructive/10 text-sm"
           >
             <TrendingDown className="size-4" /> <span className="hidden sm:inline">Chiqim (xarajat)</span><span className="sm:hidden">Chiqim</span>
+          </button>
+          <button
+            onClick={() => setBuyOpen(true)}
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-amber-500 text-amber-700 hover:bg-amber-50 text-sm"
+          >
+            <Wheat className="size-4" /> <span className="hidden sm:inline">Xomashyo xarid</span><span className="sm:hidden">Xomashyo</span>
+          </button>
+          <button
+            onClick={() => setSalaryOpen(true)}
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-emerald-500 text-emerald-700 hover:bg-emerald-50 text-sm"
+          >
+            <Banknote className="size-4" /> <span className="hidden sm:inline">Oylik to'lash</span><span className="sm:hidden">Oylik</span>
           </button>
           <button
             onClick={() => setKirimOpen(true)}
@@ -648,6 +673,18 @@ export function KassaPage() {
         <TransferModal
           accounts={accounts?.results ?? []}
           onClose={() => setTransferOpen(false)}
+        />
+      )}
+      {buyOpen && (
+        <PurchaseModal
+          ingredients={ingredients?.results ?? []}
+          onClose={() => setBuyOpen(false)}
+        />
+      )}
+      {salaryOpen && (
+        <KassaSalaryModal
+          accounts={accounts?.results ?? []}
+          onClose={() => setSalaryOpen(false)}
         />
       )}
       {editTx && (
@@ -2172,6 +2209,131 @@ function EditTransactionModal({
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// Pay salary / advance / bonus straight from the kassa page (POSTs the same
+// SalaryPayment the Oylik page uses, so it deducts kassa + updates the balance).
+function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [userId, setUserId] = useState<number | "">("");
+  const [kind, setKind] = useState("salary");
+  const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
+  const [amount, setAmount] = useState("");
+  const [accountId, setAccountId] = useState<number | "">(accounts[0]?.id ?? "");
+  const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr());
+  const [periodStart, setPeriodStart] = useState("");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [note, setNote] = useState("");
+
+  const { data: employees } = useQuery<{ results: { user_id: number; display_name: string }[] }>({
+    queryKey: ["salary", "employees", "kassa-picker"],
+    queryFn: async () => (await api.get("/salary/employees/")).data,
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.post("/salary/payments/", {
+        user: userId,
+        kind,
+        currency,
+        amount,
+        account: accountId,
+        occurred_at: tashkentToISO(occurredAt),
+        period_start: periodStart || null,
+        period_end: periodEnd || null,
+        note,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["kassa"] });
+      qc.invalidateQueries({ queryKey: ["salary"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
+      onClose();
+    },
+  });
+
+  const canSave = !!userId && !!accountId && parseFloat(amount) > 0 && !create.isPending;
+  const KIND_OPTS: [string, string][] = [
+    ["salary", "Oylik"],
+    ["advance", "Avans (oldindan)"],
+    ["bonus", "Bonus / ustama"],
+    ["deduction", "Ushlab qolish"],
+  ];
+
+  return (
+    <div className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md bg-card rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
+      >
+        <h2 className="font-semibold text-lg mb-4">Oylik to'lash</h2>
+        <div className="space-y-3">
+          <Field label="Xodim">
+            <select
+              value={userId}
+              onChange={(e) => setUserId(e.target.value ? Number(e.target.value) : "")}
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+            >
+              <option value="">Tanlang…</option>
+              {employees?.results.map((e) => (
+                <option key={e.user_id} value={e.user_id}>{e.display_name}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Tur">
+              <select value={kind} onChange={(e) => setKind(e.target.value)} className="w-full h-10 rounded-lg border bg-background px-3 text-sm">
+                {KIND_OPTS.map(([k, v]) => (<option key={k} value={k}>{v}</option>))}
+              </select>
+            </Field>
+            <Field label="Valyuta">
+              <select value={currency} onChange={(e) => setCurrency(e.target.value as "UZS" | "USD")} className="w-full h-10 rounded-lg border bg-background px-3 text-sm">
+                <option value="UZS">UZS</option>
+                <option value="USD">USD</option>
+              </select>
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Miqdor">
+              <input className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+            </Field>
+            <Field label="Kassa">
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")} className="w-full h-10 rounded-lg border bg-background px-3 text-sm">
+                <option value="">Tanlang…</option>
+                {accounts.map((a) => (<option key={a.id} value={a.id}>{a.name}</option>))}
+              </select>
+            </Field>
+          </div>
+          <Field label="To'lov vaqti">
+            <input type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} className="w-full h-10 rounded-lg border bg-background px-3 text-sm" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Davr boshi">
+              <input type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} className="w-full h-10 rounded-lg border bg-background px-3 text-sm" />
+            </Field>
+            <Field label="Davr oxiri">
+              <input type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} className="w-full h-10 rounded-lg border bg-background px-3 text-sm" />
+            </Field>
+          </div>
+          <Field label="Izoh">
+            <textarea className="w-full rounded-lg border bg-background px-3 py-2 text-sm min-h-[60px]" value={note} onChange={(e) => setNote(e.target.value)} />
+          </Field>
+        </div>
+        {create.isError && (
+          <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">Saqlashda xatolik.</div>
+        )}
+        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+          <button onClick={onClose} className="h-10 px-4 rounded-lg border text-sm hover:bg-muted">Bekor qilish</button>
+          <button
+            disabled={!canSave}
+            onClick={() => create.mutate()}
+            className="h-10 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm disabled:opacity-50"
+          >
+            Saqlash
+          </button>
+        </div>
       </div>
     </div>
   );

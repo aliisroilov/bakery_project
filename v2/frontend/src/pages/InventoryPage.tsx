@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Pencil, Plus, Settings2, Wheat } from "lucide-react";
+import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Pencil, Plus, Settings2, Trash2, Wheat } from "lucide-react";
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated } from "../lib/types";
 import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
 
-interface Ingredient {
+export interface Ingredient {
   id: number;
   name: string;
   unit: number;
@@ -52,8 +52,18 @@ export function InventoryPage() {
   const [adjustIng, setAdjustIng] = useState<Ingredient | null>(null);
   const [priceIng, setPriceIng] = useState<Ingredient | null>(null);
   const [showArchivedIng, setShowArchivedIng] = useState(false);
+  const [editPurchase, setEditPurchase] = useState<Purchase | null>(null);
 
   const qc = useQueryClient();
+
+  const deletePurchase = useMutation({
+    mutationFn: (id: number) => api.delete(`/inventory/purchases/${id}/`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["kassa"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
+    },
+  });
 
   const { data: ingredients } = useQuery<Paginated<Ingredient>>({
     queryKey: ["inventory", "ingredients", showArchivedIng],
@@ -294,11 +304,12 @@ export function InventoryPage() {
               <th className="text-right px-4 py-3 font-medium">Miqdor</th>
               <th className="text-right px-4 py-3 font-medium">Narx</th>
               <th className="text-left px-4 py-3 font-medium">Kassa</th>
+              <th className="w-20 px-2 py-3"></th>
             </tr>
           </thead>
           <tbody className="divide-y">
             {purchases?.results.slice(0, 25).map((p) => (
-              <tr key={p.id}>
+              <tr key={p.id} className="hover:bg-muted/20">
                 <td className="px-4 py-3 text-muted-foreground tabular-nums">
                   {fmtDate(p.occurred_at)}
                 </td>
@@ -310,6 +321,25 @@ export function InventoryPage() {
                   {formatMoney(p.total_price, p.currency)}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{p.account_name}</td>
+                <td className="px-2 py-3 text-right whitespace-nowrap">
+                  <button
+                    onClick={() => setEditPurchase(p)}
+                    title="Tahrirlash"
+                    className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`"${p.ingredient_name}" xaridini o'chirasizmi? Ombor qoldig'i va kassa qaytariladi.`))
+                        deletePurchase.mutate(p.id);
+                    }}
+                    title="O'chirish"
+                    className="p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -332,6 +362,23 @@ export function InventoryPage() {
                 <span className="tabular-nums">
                   {parseFloat(p.quantity).toFixed(2)}
                 </span>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setEditPurchase(p)}
+                  className="flex-1 inline-flex items-center justify-center gap-1 h-8 rounded-lg border text-xs hover:bg-muted"
+                >
+                  <Pencil className="size-3.5" /> Tahrirlash
+                </button>
+                <button
+                  onClick={() => {
+                    if (window.confirm(`"${p.ingredient_name}" xaridini o'chirasizmi? Ombor qoldig'i va kassa qaytariladi.`))
+                      deletePurchase.mutate(p.id);
+                  }}
+                  className="inline-flex items-center justify-center gap-1 h-8 px-3 rounded-lg border border-destructive/40 text-destructive text-xs hover:bg-destructive/10"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
               </div>
             </div>
           ))}
@@ -422,6 +469,13 @@ export function InventoryPage() {
         <PurchaseModal
           ingredients={ingredients?.results ?? []}
           onClose={() => setPurchaseOpen(false)}
+        />
+      )}
+      {editPurchase && (
+        <PurchaseModal
+          ingredients={ingredients?.results ?? []}
+          existing={editPurchase}
+          onClose={() => setEditPurchase(null)}
         />
       )}
       {reviziyaOpen && (
@@ -522,21 +576,26 @@ function SetPriceModal({
   );
 }
 
-function PurchaseModal({
+export function PurchaseModal({
   ingredients,
   onClose,
+  existing,
 }: {
   ingredients: Ingredient[];
   onClose: () => void;
+  existing?: Purchase;
 }) {
   const qc = useQueryClient();
-  const [ingredientId, setIngredientId] = useState<number | "">("");
-  const [accountId, setAccountId] = useState<number | "">("");
-  const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr().slice(0, 10));
-  const [note, setNote] = useState("");
+  const isEdit = !!existing;
+  const [ingredientId, setIngredientId] = useState<number | "">(existing?.ingredient ?? "");
+  const [accountId, setAccountId] = useState<number | "">(existing?.account ?? "");
+  const [currency, setCurrency] = useState<"UZS" | "USD">(existing?.currency ?? "UZS");
+  const [quantity, setQuantity] = useState(existing ? String(parseFloat(existing.quantity)) : "");
+  const [unitPrice, setUnitPrice] = useState(existing ? String(parseFloat(existing.unit_price)) : "");
+  const [occurredAt, setOccurredAt] = useState(
+    existing ? existing.occurred_at.slice(0, 10) : nowTashkentStr().slice(0, 10),
+  );
+  const [note, setNote] = useState(existing?.note ?? "");
 
   const qtyNum = parseFloat(quantity) || 0;
   const unitNum = parseFloat(unitPrice) || 0;
@@ -552,8 +611,8 @@ function PurchaseModal({
   });
 
   const create = useMutation({
-    mutationFn: () =>
-      api.post("/inventory/purchases/", {
+    mutationFn: () => {
+      const payload = {
         ingredient: ingredientId,
         account: accountId,
         currency,
@@ -561,7 +620,11 @@ function PurchaseModal({
         total_price: totalPrice,
         occurred_at: tashkentToISO(occurredAt + "T00:00"),
         note,
-      }),
+      };
+      return isEdit
+        ? api.patch(`/inventory/purchases/${existing!.id}/`, payload)
+        : api.post("/inventory/purchases/", payload);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory"] });
       qc.invalidateQueries({ queryKey: ["kassa"] });
@@ -582,7 +645,7 @@ function PurchaseModal({
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-md bg-card rounded-2xl shadow-xl border p-4 sm:p-6 max-h-[90vh] overflow-y-auto"
       >
-        <h2 className="font-semibold text-lg mb-4">Yangi xarid</h2>
+        <h2 className="font-semibold text-lg mb-4">{isEdit ? "Xaridni tahrirlash" : "Yangi xarid"}</h2>
         <div className="space-y-3">
           <Field label="Ingredient">
             <select
