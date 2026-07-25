@@ -4,6 +4,7 @@ import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Pencil,
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated } from "../lib/types";
 import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 
 export interface Ingredient {
   id: number;
@@ -63,6 +64,11 @@ export function InventoryPage() {
       qc.invalidateQueries({ queryKey: ["kassa"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
     },
+  });
+
+  usePageHotkeys({
+    onCreate: () => setPurchaseOpen(true),
+    disabled: purchaseOpen || reviziyaOpen || !!adjustIng || !!priceIng || !!editPurchase,
   });
 
   const { data: ingredients } = useQuery<Paginated<Ingredient>>({
@@ -633,8 +639,12 @@ export function PurchaseModal({
     },
   });
 
-  const canSave =
-    ingredientId && accountId && qtyNum > 0 && unitNum > 0;
+  const canSave = !!(ingredientId && accountId && qtyNum > 0 && unitNum > 0);
+  useModalHotkeys({
+    onClose,
+    onSaveExit: () => { if (canSave && !create.isPending) create.mutate(); },
+    canSave,
+  });
 
   return (
     <div

@@ -20,6 +20,7 @@ import { api } from "../lib/api";
 import { C, TICK, mkTooltip } from "../lib/chart";
 import type { KassaAccount, Paginated } from "../lib/types";
 import { formatMoney, fmtDate, fmtDMY, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 
 /** "dd-mm-yyyy – dd-mm-yyyy" for a salary payment's covered period, or null. */
 function periodLabel(p: { period_start: string | null; period_end: string | null }): string | null {
@@ -167,6 +168,11 @@ export function SalaryPage() {
   const [editingRate, setEditingRate] = useState<EmployeeSummary | null>(null);
   const [historyFor, setHistoryFor] = useState<EmployeeSummary | null>(null);
   const [quickOpen, setQuickOpen] = useState(false);
+
+  usePageHotkeys({
+    onCreate: () => setQuickOpen(true),
+    disabled: quickOpen || !!payingFor || !!editingRate || !!historyFor,
+  });
 
   const { data: summary, isLoading } = useQuery<{
     results: EmployeeSummary[];
@@ -679,6 +685,11 @@ function PaymentModal({
   });
 
   const canSave = userId && accountId && parseFloat(amount) > 0;
+  useModalHotkeys({
+    onClose,
+    onSaveExit: () => { if (canSave && !create.isPending) create.mutate(); },
+    canSave: !!canSave,
+  });
   const title = preselectUser
     ? `${preselectUser.display_name} uchun to'lov`
     : "Yangi to'lov";
@@ -872,6 +883,7 @@ function RateModal({
       onClose();
     },
   });
+  useModalHotkeys({ onClose, onSaveExit: () => { if (!save.isPending) save.mutate(); } });
 
   return (
     <div

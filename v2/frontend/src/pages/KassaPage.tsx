@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Wallet,
@@ -26,6 +26,7 @@ import { C, TICK, mkTooltip } from "../lib/chart";
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated, Shop } from "../lib/types";
 import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 import { useAuth } from "../lib/auth";
 
 function getApiError(err: unknown): string {
@@ -200,6 +201,13 @@ export function KassaPage() {
   // Transaction detail: desktop hover popover + mobile tap-to-expand.
   const [hoverTx, setHoverTx] = useState<{ tx: KassaTransaction; top: number; right: number } | null>(null);
   const [expandedTxId, setExpandedTxId] = useState<number | null>(null);
+
+  // Hotkeys: Insert → new kirim, Delete → new chiqim (rasxod) — only when no modal open.
+  usePageHotkeys({
+    onCreate: () => setKirimOpen(true),
+    onDelete: () => setChiqimOpen(true),
+    disabled: kirimOpen || chiqimOpen || handoverOpen || transferOpen || buyOpen || salaryOpen || !!editTx,
+  });
   const today = nowTashkentStr().slice(0, 10);
   const [reportFrom, setReportFrom] = useState<string>(today);
   const [reportTo, setReportTo] = useState<string>(today);
@@ -1429,6 +1437,7 @@ function ChiqimModal({
       (await api.get<Paginated<ExpenseCategory>>("/finance/expense-categories/")).data,
   });
 
+  const keepOpen = useRef(false);
   const create = useMutation({
     mutationFn: () =>
       api.post("/finance/expenses/", {
@@ -1443,11 +1452,15 @@ function ChiqimModal({
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["kassa"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
-      onClose();
+      if (keepOpen.current) { setAmount(""); setTitle(""); setNote(""); }
+      else onClose();
     },
   });
 
   const canSave = !!accountId && parseFloat(amount) > 0;
+  const saveExit = () => { keepOpen.current = false; if (canSave) create.mutate(); };
+  const saveNew = () => { keepOpen.current = true; if (canSave) create.mutate(); };
+  useModalHotkeys({ onClose, onSaveExit: saveExit, onSaveNew: saveNew, canSave });
 
   return (
     <div
@@ -1544,7 +1557,8 @@ function ChiqimModal({
             {getApiError(create.error)}
           </div>
         )}
-        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+        <p className="mt-3 text-[11px] text-muted-foreground">Ctrl+Enter — saqlash · Shift+Enter — saqlab yangi · Esc — chiqish</p>
+        <div className="mt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
           <button
             onClick={onClose}
             className="h-10 px-4 rounded-lg border text-sm hover:bg-muted"
@@ -1553,7 +1567,7 @@ function ChiqimModal({
           </button>
           <button
             disabled={!canSave || create.isPending}
-            onClick={() => create.mutate()}
+            onClick={saveExit}
             className="h-10 px-4 rounded-lg bg-destructive hover:bg-destructive/90 text-white text-sm disabled:opacity-50"
           >
             {create.isPending ? "Saqlanmoqda…" : "Chiqim yozish"}
@@ -1731,6 +1745,7 @@ function KirimModal({
       (await api.get<Paginated<Shop>>("/shops/?archived=false")).data,
   });
 
+  const keepOpen = useRef(false);
   const create = useMutation({
     mutationFn: () =>
       api.post("/finance/payments/", {
@@ -1750,9 +1765,14 @@ function KirimModal({
       qc.invalidateQueries({ queryKey: ["kassa"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
       qc.invalidateQueries({ queryKey: ["shops"] });
-      onClose();
+      if (keepOpen.current) { setAmount(""); setDiscount("0"); setNote(""); setShopId(""); }
+      else onClose();
     },
   });
+  const canSave = !!shopId && !!amount && !create.isPending;
+  const saveExit = () => { keepOpen.current = false; if (canSave) create.mutate(); };
+  const saveNew = () => { keepOpen.current = true; if (canSave) create.mutate(); };
+  useModalHotkeys({ onClose, onSaveExit: saveExit, onSaveNew: saveNew, canSave });
 
   return (
     <div className="fixed inset-0 grid place-items-center bg-black/30 p-3 sm:p-4 z-50" onClick={onClose}>
@@ -1837,13 +1857,14 @@ function KirimModal({
             {getApiError(create.error)}
           </div>
         )}
-        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+        <p className="mt-3 text-[11px] text-muted-foreground">Ctrl+Enter — saqlash · Shift+Enter — saqlab yangi · Esc — chiqish</p>
+        <div className="mt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
           <button onClick={onClose} className="h-10 px-4 rounded-lg border text-sm hover:bg-muted">
             Bekor qilish
           </button>
           <button
             disabled={!shopId || !amount || create.isPending}
-            onClick={() => create.mutate()}
+            onClick={saveExit}
             className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
           >
             Saqlash
@@ -2233,6 +2254,7 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
     queryFn: async () => (await api.get("/salary/employees/")).data,
   });
 
+  const keepOpen = useRef(false);
   const create = useMutation({
     mutationFn: () =>
       api.post("/salary/payments/", {
@@ -2250,11 +2272,18 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
       qc.invalidateQueries({ queryKey: ["kassa"] });
       qc.invalidateQueries({ queryKey: ["salary"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "summary"] });
-      onClose();
+      if (keepOpen.current) {
+        setAmount(""); setNote(""); setUserId("");
+      } else {
+        onClose();
+      }
     },
   });
 
   const canSave = !!userId && !!accountId && parseFloat(amount) > 0 && !create.isPending;
+  const saveExit = () => { keepOpen.current = false; if (canSave) create.mutate(); };
+  const saveNew = () => { keepOpen.current = true; if (canSave) create.mutate(); };
+  useModalHotkeys({ onClose, onSaveExit: saveExit, onSaveNew: saveNew, canSave });
   const KIND_OPTS: [string, string][] = [
     ["salary", "Oylik"],
     ["advance", "Avans (oldindan)"],
@@ -2324,11 +2353,12 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
         {create.isError && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">Saqlashda xatolik.</div>
         )}
-        <div className="mt-5 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+        <p className="mt-3 text-[11px] text-muted-foreground">Ctrl+Enter — saqlash · Shift+Enter — saqlab yangi · Esc — chiqish</p>
+        <div className="mt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
           <button onClick={onClose} className="h-10 px-4 rounded-lg border text-sm hover:bg-muted">Bekor qilish</button>
           <button
             disabled={!canSave}
-            onClick={() => create.mutate()}
+            onClick={saveExit}
             className="h-10 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm disabled:opacity-50"
           >
             Saqlash

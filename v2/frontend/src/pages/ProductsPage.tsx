@@ -4,6 +4,7 @@ import { Wheat, Plus, RefreshCw, Trash2, Pencil, Archive, ArchiveRestore } from 
 import { api } from "../lib/api";
 import type { Paginated, Product } from "../lib/types";
 import { formatMoney } from "../lib/utils";
+import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 
 interface Ingredient {
   id: number;
@@ -22,6 +23,8 @@ export function ProductsPage() {
   const [editProduct, setEditProduct] = useState<Product | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const qc = useQueryClient();
+
+  usePageHotkeys({ onCreate: () => setOpen(true), disabled: open || !!editProduct });
 
   const { data, isLoading } = useQuery<Paginated<Product>>({
     queryKey: ["products", { archived: showArchived }],
@@ -381,6 +384,11 @@ function ProductModal({
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   const canSave = name.trim().length > 0 && recipesLoaded;
+  useModalHotkeys({
+    onClose,
+    onSaveExit: () => { if (canSave && !save.isPending) save.mutate(); },
+    canSave,
+  });
 
   return (
     <div
