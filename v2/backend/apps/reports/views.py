@@ -1220,6 +1220,33 @@ class SofpView(APIView):
                 })
         inv_items.sort(key=lambda x: x["value"], reverse=True)
 
+        # Salary payable (liability) — Oylik qarzdorligi: what we still owe staff.
+        # Uses the same outstanding-balance formula as the Oylik page Qoldiq, so
+        # the total matches the salary page's "Jami Qoldiq". Net of advances
+        # (negative balances where a worker owes us). UZS salaries only (USD rates
+        # are excluded to keep the UZS liability clean).
+        from django.contrib.auth import get_user_model
+        from apps.salary.utils import salary_outstanding
+        User = get_user_model()
+        payable_users = (
+            User.objects
+            .filter(role__in=["nonvoy", "driver", "accountant", "manager"], is_archived=False)
+            .select_related("salary_rate")
+        )
+        salary_items = []
+        total_salary_owed = 0.0
+        for u in payable_users:
+            rate = getattr(u, "salary_rate", None)
+            if rate is not None and rate.currency == "USD":
+                continue
+            rem = float(salary_outstanding(u, rate))
+            total_salary_owed += rem
+            if rem > 0.5:
+                salary_items.append({"name": u.display_name, "uzs": rem})
+        salary_items.sort(key=lambda x: -x["uzs"])
+        total_salary_owed = round(total_salary_owed, 2)
+        total_liab_uzs = total_credit_uzs + total_salary_owed
+
         return Response({
             "as_of": timezone.localdate().isoformat(),
             "cash": {"items": cash_items, "total_uzs": total_cash_uzs, "total_usd": total_cash_usd},
@@ -1230,19 +1257,23 @@ class SofpView(APIView):
             },
             # Inventory is valued from the manual Ombor price (avg_cost_uzs, UZS only).
             "inventory": {"items": inv_items, "total_uzs": total_inv},
-            # Liabilities — customer credits (shops that overpaid / prepaid).
+            # Liabilities — customer credits (overpaid shops) + salary owed to staff.
             "liabilities": {
                 "customer_credits": {
                     "items": credit_items,
                     "total_uzs": total_credit_uzs,
                     "total_usd": total_credit_usd,
                 },
-                "total_uzs": total_credit_uzs,
+                "salary_payable": {
+                    "items": salary_items,
+                    "total_uzs": total_salary_owed,
+                },
+                "total_uzs": total_liab_uzs,
                 "total_usd": total_credit_usd,
             },
             "total_assets_uzs": total_cash_uzs + total_recv_uzs + total_inv,
             "total_assets_usd": total_cash_usd + total_recv_usd,
             # Net worth after subtracting liabilities (a simple equity proxy).
-            "net_worth_uzs": total_cash_uzs + total_recv_uzs + total_inv - total_credit_uzs,
+            "net_worth_uzs": total_cash_uzs + total_recv_uzs + total_inv - total_liab_uzs,
             "net_worth_usd": total_cash_usd + total_recv_usd - total_credit_usd,
         })

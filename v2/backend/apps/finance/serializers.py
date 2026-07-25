@@ -30,6 +30,9 @@ class KassaTransactionSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(
         source="created_by.display_name", read_only=True, default=None
     )
+    # The user's own comment on the source record (resolved in bulk by the
+    # viewset). `note` is the auto-generated description; this is the real izoh.
+    source_note = serializers.SerializerMethodField()
 
     class Meta:
         model = KassaTransaction
@@ -37,8 +40,12 @@ class KassaTransactionSerializer(serializers.ModelSerializer):
             "id", "account", "account_name",
             "kind", "kind_display", "currency", "amount",
             "reference_model", "reference_id",
-            "note", "occurred_at", "created_by", "created_by_name", "created_at",
+            "note", "source_note", "occurred_at", "created_by", "created_by_name", "created_at",
         ]
+
+    def get_source_note(self, obj):
+        notes = self.context.get("source_notes") or {}
+        return notes.get((obj.reference_model, obj.reference_id))
         read_only_fields = ["created_at"]
 
 

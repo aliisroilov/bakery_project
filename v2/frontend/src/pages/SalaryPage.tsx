@@ -53,6 +53,7 @@ interface EmployeeRate {
   rate: string;
   currency: "UZS" | "USD";
   initial_balance: string;
+  reset_date: string | null;
   note: string;
 }
 
@@ -847,6 +848,7 @@ function RateModal({
   const [initialBalance, setInitialBalance] = useState(
     existing?.initial_balance ?? "0",
   );
+  const [resetDate, setResetDate] = useState(existing?.reset_date ?? "");
   const [note, setNote] = useState(existing?.note ?? "");
 
   const save = useMutation({
@@ -857,6 +859,7 @@ function RateModal({
         rate,
         currency,
         initial_balance: initialBalance,
+        reset_date: resetDate || null,
         note,
       };
       if (existing) {
@@ -927,6 +930,17 @@ function RateModal({
               onChange={(e) => setInitialBalance(e.target.value)}
               inputMode="decimal"
             />
+          </Field>
+          <Field label="Oylik hisoblanish boshlanish sanasi">
+            <input
+              type="date"
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+              value={resetDate}
+              onChange={(e) => setResetDate(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Shu sanadan oldingi ishlab chiqarish va to'lovlar hisobga olinmaydi (bo'sh = hammasi).
+            </p>
           </Field>
           {rateType === "per_product" && (
             <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-2">

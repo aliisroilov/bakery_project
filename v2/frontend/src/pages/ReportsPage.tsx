@@ -801,36 +801,48 @@ function SofpTab() {
             <div className="rounded-xl border bg-card overflow-hidden">
               <div className="px-5 py-3 border-b font-semibold text-sm flex items-center gap-2">
                 <TrendingUp className="size-4 rotate-180 text-red-500" />
-                Majburiyatlar — do'kon kreditlari
+                Majburiyatlar
               </div>
-              {(data.liabilities?.customer_credits?.items as any[] ?? []).length === 0 ? (
-                <div className="px-5 py-8 text-center text-sm text-muted-foreground">Majburiyat yo'q</div>
-              ) : (
-                <div className="divide-y max-h-64 overflow-auto">
-                  {(data.liabilities.customer_credits.items as any[]).map((r, i) => (
-                    <div key={i} className="px-5 py-2.5 flex items-center justify-between text-sm">
-                      <span className="truncate mr-2">{r.name}</span>
-                      <div className="text-right whitespace-nowrap">
-                        {r.uzs > 0 && (
-                          <div className="tabular-nums font-medium">{formatMoney(String(Math.round(r.uzs)), "UZS")}</div>
-                        )}
-                        {r.usd > 0 && (
-                          <div className="tabular-nums text-xs text-muted-foreground">{formatMoney(String(r.usd), "USD")}</div>
+              {(() => {
+                const credits = (data.liabilities?.customer_credits?.items as any[]) ?? [];
+                const salary = (data.liabilities?.salary_payable?.items as any[]) ?? [];
+                if (credits.length === 0 && salary.length === 0)
+                  return <div className="px-5 py-8 text-center text-sm text-muted-foreground">Majburiyat yo'q</div>;
+                return (
+                  <div className="divide-y max-h-72 overflow-auto">
+                    {credits.length > 0 && (
+                      <div className="px-5 py-1.5 bg-muted/30 text-xs font-medium text-muted-foreground">Do'kon kreditlari</div>
+                    )}
+                    {credits.map((r, i) => (
+                      <div key={"c" + i} className="px-5 py-2.5 flex items-center justify-between text-sm">
+                        <span className="truncate mr-2">{r.name}</span>
+                        <div className="text-right whitespace-nowrap">
+                          {r.uzs > 0 && <div className="tabular-nums font-medium">{formatMoney(String(Math.round(r.uzs)), "UZS")}</div>}
+                          {r.usd > 0 && <div className="tabular-nums text-xs text-muted-foreground">{formatMoney(String(r.usd), "USD")}</div>}
+                        </div>
+                      </div>
+                    ))}
+                    {salary.length > 0 && (
+                      <div className="px-5 py-1.5 bg-muted/30 text-xs font-medium text-muted-foreground">Oylik qarzdorligi (xodimlar)</div>
+                    )}
+                    {salary.map((r, i) => (
+                      <div key={"s" + i} className="px-5 py-2.5 flex items-center justify-between text-sm">
+                        <span className="truncate mr-2">{r.name}</span>
+                        <div className="tabular-nums font-medium">{formatMoney(String(Math.round(r.uzs)), "UZS")}</div>
+                      </div>
+                    ))}
+                    <div className="px-5 py-3 flex items-center justify-between text-sm bg-muted/40 font-semibold">
+                      <span>Jami</span>
+                      <div className="text-right">
+                        <div className="tabular-nums">{formatMoney(String(Math.round(data.liabilities.total_uzs)), "UZS")}</div>
+                        {data.liabilities.total_usd > 0 && (
+                          <div className="tabular-nums text-xs text-muted-foreground">{formatMoney(String(data.liabilities.total_usd), "USD")}</div>
                         )}
                       </div>
                     </div>
-                  ))}
-                  <div className="px-5 py-3 flex items-center justify-between text-sm bg-muted/40 font-semibold">
-                    <span>Jami</span>
-                    <div className="text-right">
-                      <div className="tabular-nums">{formatMoney(String(Math.round(data.liabilities.total_uzs)), "UZS")}</div>
-                      {data.liabilities.total_usd > 0 && (
-                        <div className="tabular-nums text-xs text-muted-foreground">{formatMoney(String(data.liabilities.total_usd), "USD")}</div>
-                      )}
-                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
             <div className="rounded-xl border bg-card p-5 flex flex-col justify-center">
               <div className="flex items-center gap-2 mb-2">
@@ -846,7 +858,7 @@ function SofpTab() {
                 </div>
               )}
               <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
-                Naqd + do'kon qarzlari + ombor qiymati, do'kon kreditlari ayirilgan holda.
+                Naqd + do'kon qarzlari + ombor qiymati, do'kon kreditlari va oylik qarzdorligi ayirilgan holda.
               </p>
             </div>
           </div>

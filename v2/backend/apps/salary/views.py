@@ -330,6 +330,7 @@ class SalaryEmployeeSummaryView(APIView):
                     "rate": str(rate_obj.rate),
                     "currency": rate_obj.currency,
                     "initial_balance": str(rate_obj.initial_balance),
+                    "reset_date": rate_obj.reset_date.isoformat() if rate_obj.reset_date else None,
                     "note": rate_obj.note,
                 }
 

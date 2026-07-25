@@ -152,6 +152,31 @@ def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Dec
     return Decimal("0.00")
 
 
+def salary_outstanding(user, rate_obj=None) -> Decimal:
+    """True outstanding salary balance for *user* — mirrors the Oylik page Qoldiq
+    and SalaryEmployeeSummaryView.remaining.
+
+    remaining = earned since reset − unsettled non-bonus payments since reset.
+    Positive = we owe the employee (liability); negative = they owe us (net
+    advances, an asset). initial_balance is intentionally excluded (see the note
+    in SalaryEmployeeSummaryView).
+    """
+    from django.db.models import Sum
+    from .models import SalaryPayment
+
+    if rate_obj is None:
+        rate_obj = getattr(user, "salary_rate", None)
+    if rate_obj is None:
+        return Decimal("0.00")
+    reset = getattr(rate_obj, "reset_date", None)
+    earned_total = calculate_earned(user, rate_obj)
+    owed_pay = SalaryPayment.objects.filter(user=user, settled=False).exclude(kind="bonus")
+    if reset:
+        owed_pay = owed_pay.filter(occurred_at__date__gte=reset)
+    paid_total = owed_pay.aggregate(t=Sum("amount"))["t"] or Decimal("0.00")
+    return earned_total - paid_total
+
+
 def calculate_earned(user, rate_obj) -> Decimal:
     """Compute earned salary for `user` based on their SalaryRate.
 

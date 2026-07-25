@@ -42,6 +42,32 @@ class KassaAccountViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = KassaAccountSerializer
 
 
+def _resolve_source_notes(rows) -> dict:
+    """{(reference_model, reference_id): user_note} for a batch of transactions.
+
+    The kassa note is an auto-generated description ("Kirim · Shop"); the user's
+    own comment lives on the source record. Resolve it in bulk — one query per
+    distinct source model — so the detail popover can show the real comment for
+    both old and new transactions without N+1 or a data backfill.
+    """
+    from django.apps import apps as django_apps
+
+    by_model: dict[str, set] = {}
+    for tx in rows:
+        if tx.reference_model and tx.reference_id:
+            by_model.setdefault(tx.reference_model, set()).add(tx.reference_id)
+    out: dict = {}
+    for label, ids in by_model.items():
+        try:
+            model = django_apps.get_model(*label.split("."))
+            for pk, note in model.objects.filter(pk__in=ids).values_list("pk", "note"):
+                if note and note.strip():
+                    out[(label, pk)] = note.strip()
+        except Exception:
+            continue  # unknown model or no `note` field — skip gracefully
+    return out
+
+
 class KassaTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [ReadOrManagerWrite]
     serializer_class = KassaTransactionSerializer
@@ -62,6 +88,16 @@ class KassaTransactionViewSet(viewsets.ReadOnlyModelViewSet):
         if date_to := p.get("date_to"):
             qs = qs.filter(occurred_at__date__lte=date_to)
         return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        rows = page if page is not None else list(queryset)
+        ctx = {**self.get_serializer_context(), "source_notes": _resolve_source_notes(rows)}
+        serializer = self.get_serializer(rows, many=True, context=ctx)
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
 
 # ─────────────────── Payments (Kirim) ───────────────────

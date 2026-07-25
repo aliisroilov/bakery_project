@@ -54,6 +54,7 @@ interface KassaTransaction {
   reference_model: string;
   reference_id: number | null;
   created_by_name: string | null;
+  source_note: string | null;
 }
 
 // All kinds backed by an editable source record.
@@ -95,6 +96,9 @@ function TxDetails({ tx }: { tx: KassaTransaction }) {
     ["Kim kiritdi", tx.created_by_name || "—"],
   ];
   if (tx.note) rows.push(["Izoh", tx.note]);
+  // The user's own comment on the source record (when it adds info beyond the note).
+  if (tx.source_note && !tx.note.includes(tx.source_note))
+    rows.push(["Komment", tx.source_note]);
   return (
     <dl className="space-y-1.5 text-xs">
       {rows.map(([k, v]) => (
