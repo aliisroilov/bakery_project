@@ -388,7 +388,9 @@ function ProductionModal({
         product: productId,
         meshok_count: meshokCount,
         unit_count: unitCount || "0",
-        occurred_at: tashkentToISO(occurredAt + "T00:00"),
+        // Store at Tashkent noon (07:00 UTC) so the calendar date is the same in
+        // UTC and Tashkent — avoids production showing up one day behind.
+        occurred_at: tashkentToISO(occurredAt + "T12:00"),
         note,
         nonvoy: actorType === "nonvoy" ? (nonvoyId || null) : null,
         group: actorType === "group" ? (groupId || null) : null,

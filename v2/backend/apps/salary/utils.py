@@ -11,7 +11,22 @@ their role/pay level (e.g. master baker vs helper).
 from __future__ import annotations
 
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+
+
+def _count_weekly_periods(start: date, end: date, week_start_day: int) -> int:
+    """Completed pay-weeks between *start* and *end*, each week ending on
+    *week_start_day* (Mon=0…Sun=6): the number of `week_start_day` weekdays
+    strictly after start, up to and including end."""
+    if end <= start:
+        return 0
+    days_ahead = (week_start_day - start.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7  # strictly after start
+    first = start + timedelta(days=days_ahead)
+    if first > end:
+        return 0
+    return (end - first).days // 7 + 1
 
 
 def _parse_date(d) -> date | None:
@@ -136,8 +151,12 @@ def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Dec
         return Decimal("0.00")  # range is entirely before the reset date
 
     if rt == RateType.PER_WEEK:
-        days = max((effective_to - effective_from).days + 1, 0)
-        weeks = Decimal(str(days)) / Decimal("7")
+        wsd = getattr(rate_obj, "week_start_day", None)
+        if wsd is not None:
+            weeks = Decimal(_count_weekly_periods(effective_from, effective_to, wsd))
+        else:
+            days = max((effective_to - effective_from).days + 1, 0)
+            weeks = Decimal(str(days)) / Decimal("7")
         return (weeks * rate).quantize(Decimal("0.01"))
 
     if rt == RateType.FIXED_MONTHLY:
@@ -201,8 +220,12 @@ def calculate_earned(user, rate_obj) -> Decimal:
         start = user.date_joined.date() if hasattr(user, "date_joined") else date.today()
         if reset and reset > start:
             start = reset  # nothing accrues before the reset date
-        days = max((date.today() - start).days, 0)
-        weeks = Decimal(str(days)) / Decimal("7")
+        wsd = getattr(rate_obj, "week_start_day", None)
+        if wsd is not None:
+            weeks = Decimal(_count_weekly_periods(start, date.today(), wsd))
+        else:
+            days = max((date.today() - start).days, 0)
+            weeks = Decimal(str(days)) / Decimal("7")
         return (weeks * rate).quantize(Decimal("0.01"))
 
     if rt == RateType.FIXED_MONTHLY:

@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import F, Sum
 from django.db.models.functions import TruncDate
+from django.utils import timezone
 from rest_framework import filters, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -192,7 +193,10 @@ class ProductionBreakdownView(APIView):
 
         by_date: dict[str, dict] = {}
         for p in rows:
-            d = p.occurred_at.date().isoformat()
+            # Use Tashkent-local date, not the UTC date — a production entered
+            # near midnight (stored ~19:00 UTC the previous day) otherwise shows
+            # up one day behind in the daily breakdown.
+            d = timezone.localtime(p.occurred_at).date().isoformat()
             entry = by_date.setdefault(
                 d,
                 {
@@ -331,6 +335,7 @@ class SalaryEmployeeSummaryView(APIView):
                     "currency": rate_obj.currency,
                     "initial_balance": str(rate_obj.initial_balance),
                     "reset_date": rate_obj.reset_date.isoformat() if rate_obj.reset_date else None,
+                    "week_start_day": rate_obj.week_start_day,
                     "note": rate_obj.note,
                 }
 

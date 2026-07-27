@@ -55,6 +55,7 @@ interface EmployeeRate {
   currency: "UZS" | "USD";
   initial_balance: string;
   reset_date: string | null;
+  week_start_day: number | null;
   note: string;
 }
 
@@ -860,6 +861,9 @@ function RateModal({
     existing?.initial_balance ?? "0",
   );
   const [resetDate, setResetDate] = useState(existing?.reset_date ?? "");
+  const [weekStartDay, setWeekStartDay] = useState<string>(
+    existing?.week_start_day != null ? String(existing.week_start_day) : "",
+  );
   const [note, setNote] = useState(existing?.note ?? "");
 
   const save = useMutation({
@@ -871,6 +875,7 @@ function RateModal({
         currency,
         initial_balance: initialBalance,
         reset_date: resetDate || null,
+        week_start_day: weekStartDay === "" ? null : Number(weekStartDay),
         note,
       };
       if (existing) {
@@ -952,6 +957,25 @@ function RateModal({
             />
             <p className="text-xs text-muted-foreground mt-1">
               Shu sanadan oldingi ishlab chiqarish va to'lovlar hisobga olinmaydi (bo'sh = hammasi).
+            </p>
+          </Field>
+          <Field label="Hafta boshlanish kuni (haftalik uchun)">
+            <select
+              value={weekStartDay}
+              onChange={(e) => setWeekStartDay(e.target.value)}
+              className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+            >
+              <option value="">— (kunlik nisbat)</option>
+              <option value="0">Dushanba</option>
+              <option value="1">Seshanba</option>
+              <option value="2">Chorshanba</option>
+              <option value="3">Payshanba</option>
+              <option value="4">Juma</option>
+              <option value="5">Shanba</option>
+              <option value="6">Yakshanba</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              Haftalik (Haftalik tarif) uchun: har shu kun bir haftalik ish haqi qo'shiladi.
             </p>
           </Field>
           {rateType === "per_product" && (

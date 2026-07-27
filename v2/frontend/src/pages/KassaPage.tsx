@@ -669,6 +669,11 @@ export function KassaPage() {
         <ChiqimModal
           accounts={accounts?.results ?? []}
           onClose={() => setChiqimOpen(false)}
+          onSwitch={(mode) => {
+            setChiqimOpen(false);
+            if (mode === "salary") setSalaryOpen(true);
+            else setBuyOpen(true);
+          }}
         />
       )}
       {handoverOpen && (
@@ -1418,9 +1423,11 @@ function ExchangeForm({
 function ChiqimModal({
   accounts,
   onClose,
+  onSwitch,
 }: {
   accounts: KassaAccount[];
   onClose: () => void;
+  onSwitch?: (mode: "salary" | "buy") => void;
 }) {
   const qc = useQueryClient();
   const [categoryId, setCategoryId] = useState<number | "">("");
@@ -1487,9 +1494,17 @@ function ChiqimModal({
           <Field label="Kategoriya (ixtiyoriy)">
             <select
               value={categoryId}
-              onChange={(e) =>
-                setCategoryId(e.target.value ? Number(e.target.value) : "")
-              }
+              onChange={(e) => {
+                const v = e.target.value ? Number(e.target.value) : "";
+                setCategoryId(v);
+                // Route to the dedicated window when a special category is chosen:
+                // "Oylik" → salary payment, "Hom ashyo" → xomashyo purchase.
+                if (v && onSwitch) {
+                  const name = (categories?.results.find((c) => c.id === v)?.name ?? "").toLowerCase();
+                  if (/oylik|salary|ish haqi|maosh/.test(name)) onSwitch("salary");
+                  else if (/hom ashyo|xom ashyo|xomashyo|syr/.test(name)) onSwitch("buy");
+                }
+              }}
               className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
             >
               <option value="">— Kategoriyasiz —</option>

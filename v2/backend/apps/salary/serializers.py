@@ -11,7 +11,7 @@ class SalaryRateSerializer(serializers.ModelSerializer):
         fields = [
             "id", "user", "user_display",
             "rate_type", "currency", "rate",
-            "initial_balance", "reset_date", "note",
+            "initial_balance", "reset_date", "week_start_day", "note",
             "created_at",
         ]
         read_only_fields = ["created_at"]

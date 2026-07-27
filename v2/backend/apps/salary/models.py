@@ -19,6 +19,17 @@ class RateType(models.TextChoices):
     PER_PRODUCT = "per_product", "Mahsulot bo'yicha"
 
 
+class Weekday(models.IntegerChoices):
+    """Python weekday() convention: Monday=0 … Sunday=6."""
+    MONDAY = 0, "Dushanba"
+    TUESDAY = 1, "Seshanba"
+    WEDNESDAY = 2, "Chorshanba"
+    THURSDAY = 3, "Payshanba"
+    FRIDAY = 4, "Juma"
+    SATURDAY = 5, "Shanba"
+    SUNDAY = 6, "Yakshanba"
+
+
 class SalaryRate(TimestampedModel):
     """Per-user salary configuration."""
 
@@ -42,6 +53,13 @@ class SalaryRate(TimestampedModel):
     # before this date are NOT counted (used for a period close / fresh start so
     # historical production doesn't resurface as unpaid salary). Null = count all.
     reset_date = models.DateField(null=True, blank=True)
+    # For Haftalik (per_week) workers: which weekday begins a pay-week. When set,
+    # weekly pay accrues one rate per completed week aligned to this day instead
+    # of the day-fraction default. Null = fractional (days ÷ 7).
+    week_start_day = models.IntegerField(
+        null=True, blank=True, choices=Weekday.choices,
+        help_text="Haftalik ish haqi uchun hafta boshlanadigan kun.",
+    )
     note = models.TextField(blank=True)
 
     class Meta:
