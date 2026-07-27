@@ -14,8 +14,6 @@ import {
   Repeat,
   Pencil,
   Info,
-  Wheat,
-  Banknote,
   X,
 } from "lucide-react";
 import { PurchaseModal, type Ingredient } from "./InventoryPage";
@@ -276,18 +274,6 @@ export function KassaPage() {
             className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-destructive text-destructive hover:bg-destructive/10 text-sm"
           >
             <TrendingDown className="size-4" /> <span className="hidden sm:inline">Chiqim (xarajat)</span><span className="sm:hidden">Chiqim</span>
-          </button>
-          <button
-            onClick={() => setBuyOpen(true)}
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-amber-500 text-amber-700 hover:bg-amber-50 text-sm"
-          >
-            <Wheat className="size-4" /> <span className="hidden sm:inline">Xomashyo xarid</span><span className="sm:hidden">Xomashyo</span>
-          </button>
-          <button
-            onClick={() => setSalaryOpen(true)}
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1 h-10 px-3 sm:px-4 rounded-lg border border-emerald-500 text-emerald-700 hover:bg-emerald-50 text-sm"
-          >
-            <Banknote className="size-4" /> <span className="hidden sm:inline">Oylik to'lash</span><span className="sm:hidden">Oylik</span>
           </button>
           <button
             onClick={() => setKirimOpen(true)}
