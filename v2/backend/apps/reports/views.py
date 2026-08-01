@@ -475,11 +475,13 @@ def _collect_pnl_data(start, end, tz):
         cash-basis "ingredients bought this day" which swung wildly with
         purchase timing. Returned as the material component only; callers add the
         nonvoy production wage bucket below to get the displayed Tan narxi.
-    Salary is split into two buckets, both EXCLUDING advances (a prepayment /
-        employee receivable, not a period expense) and with deductions subtracted:
-        - prod_sal: nonvoy (baker) wages = direct production labour, folded into
-          Tan narxi so gross profit reflects the true cost of making the goods.
-        - other_sal: all other roles = period overhead, kept on the Oylik line.
+    Expenses are split by ExpenseCategory.below_op_profit:
+        - exp:  operating costs → the Xarajatlar line, above Op. foyda.
+        - draw: owner draws (Rizoxon, Bahodir) → the Harajatlar line, below
+          Op. foyda. Op. foyda therefore reflects the business only.
+    Salary: only nonvoy (baker) wages enter the P&L, as prod_sal folded into Tan
+        narxi — they are direct production labour. Advances are excluded (a
+        prepayment, not a period expense) and deductions are subtracted.
     """
     # Material + communal cost per unit for every product: materials at the manual
     # Ombor price, plus the per-unit communal (gas/electricity) rate. Both are
@@ -510,57 +512,61 @@ def _collect_pnl_data(start, end, tz):
         cos_by_date[d] = cos_by_date.get(d, 0.0) + mat_per_unit.get(item["product_id"], 0.0) * net
 
     # Expenses — categories flagged include_in_pnl=False are left out of the P&L.
+    # The rest split into operating (Xarajatlar) vs owner draws (Harajatlar).
     exp_qs = (
         GeneralExpense.objects
         .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
         .exclude(category__include_in_pnl=False)
         .annotate(d=TruncDate("occurred_at", tzinfo=tz))
-        .values("d")
+        .values("d", "category__below_op_profit")
         .annotate(total=Sum("amount"))
     )
-    exp_by_date = {r["d"]: float(r["total"] or 0) for r in exp_qs}
+    exp_by_date: dict = {}
+    draw_by_date: dict = {}
+    for r in exp_qs:
+        bucket = draw_by_date if r["category__below_op_profit"] else exp_by_date
+        bucket[r["d"]] = bucket.get(r["d"], 0.0) + float(r["total"] or 0)
 
-    # Salary line: real labour cost. Advances are prepayments (excluded);
-    # deductions reduce the expense (subtracted). Split by role: NONVOY (baker)
-    # wages are DIRECT PRODUCTION labour, so they fold into Tan narxi (cost of
-    # goods) — matching the standalone Tan narxi report, which already prices in
-    # nonvoy pay. Every other role (manager, driver, accountant) is period
-    # overhead and stays on the separate Oylik line. Each payment lands in
-    # exactly one bucket, so nothing is double-counted and Sof foyda is unchanged.
+    # NONVOY (baker) wages are DIRECT PRODUCTION labour, so they fold into Tan
+    # narxi (cost of goods) — matching the standalone Tan narxi report, which
+    # already prices in nonvoy pay. Advances are prepayments (excluded);
+    # deductions reduce the expense (subtracted). Other roles' wages are NOT a
+    # P&L line — the row below Op. foyda is Harajatlar (owner draws) instead.
     sal_rows = (
         SalaryPayment.objects
-        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+        .filter(
+            occurred_at__date__gte=start, occurred_at__date__lte=end,
+            currency="UZS", user__role="nonvoy",
+        )
         .exclude(kind="advance")
         .annotate(d=TruncDate("occurred_at", tzinfo=tz))
-        .values("d", "kind", "user__role")
+        .values("d", "kind")
         .annotate(total=Sum("amount"))
     )
     prod_sal_by_date: dict = {}   # nonvoy → Tan narxi (cost of goods)
-    other_sal_by_date: dict = {}  # everyone else → Oylik line
     for r in sal_rows:
         amt = float(r["total"] or 0)
         if r["kind"] == "deduction":
             amt = -amt
-        bucket = prod_sal_by_date if r["user__role"] == "nonvoy" else other_sal_by_date
-        bucket[r["d"]] = bucket.get(r["d"], 0.0) + amt
+        prod_sal_by_date[r["d"]] = prod_sal_by_date.get(r["d"], 0.0) + amt
 
     # Build per-day tuples for all days in range that have activity
     day_data = []
-    t = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, other_sal=0.0)
+    t = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0)
     current = start
     while current <= end:
         sales = sales_by_date.get(current, 0.0)
         cos = cos_by_date.get(current, 0.0)
         exp = exp_by_date.get(current, 0.0)
         prod_sal = prod_sal_by_date.get(current, 0.0)
-        other_sal = other_sal_by_date.get(current, 0.0)
-        if sales or cos or exp or prod_sal or other_sal:
-            day_data.append((current, sales, cos, exp, prod_sal, other_sal))
+        draw = draw_by_date.get(current, 0.0)
+        if sales or cos or exp or prod_sal or draw:
+            day_data.append((current, sales, cos, exp, prod_sal, draw))
         t["sales"] += sales
         t["cos"] += cos
         t["exp"] += exp
         t["prod_sal"] += prod_sal
-        t["other_sal"] += other_sal
+        t["draw"] += draw
         current += timedelta(days=1)
 
     return day_data, t
@@ -575,22 +581,22 @@ def build_pnl_daily(date_from=None, date_to=None):
 
     day_data, t = _collect_pnl_data(start, end, tz)
 
-    headers = ["Sana", "Savdo", "Tan narxi", "Yalpi foyda", "Xarajatlar", "Op. foyda", "Oylik", "Sof foyda"]
+    headers = ["Sana", "Savdo", "Tan narxi", "Yalpi foyda", "Xarajatlar", "Op. foyda", "Harajatlar", "Sof foyda"]
     rows = []
-    for d, sales, mat_cos, exp, prod_sal, other_sal in day_data:
+    for d, sales, mat_cos, exp, prod_sal, draw in day_data:
         cos = mat_cos + prod_sal          # Tan narxi = materials + nonvoy (production) pay
         gp = sales - cos
         op = gp - exp
-        np_v = op - other_sal
-        rows.append([d.strftime("%Y-%m-%d"), sales, cos, gp, exp, op, other_sal, np_v])
+        np_v = op - draw
+        rows.append([d.strftime("%Y-%m-%d"), sales, cos, gp, exp, op, draw, np_v])
 
     cos_t = t["cos"] + t["prod_sal"]
     gp_t = t["sales"] - cos_t
     op_t = gp_t - t["exp"]
-    np_t = op_t - t["other_sal"]
+    np_t = op_t - t["draw"]
     return headers, rows, {
         "total_sales": t["sales"], "total_cos": cos_t,
-        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["other_sal"],
+        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["draw"],
         "total_net_profit": np_t, "count": len(rows),
     }
 
@@ -601,7 +607,7 @@ def build_gross_overall(date_from=None, date_to=None):
     Deliberately different from build_pnl_daily (which shows every day):
     this gives a compact week-by-week overview suitable for management review.
 
-    Rows have 11 elements: [label, sales, cos, gp, expenses, op_profit, salary,
+    Rows have 11 elements: [label, sales, cos, gp, expenses, op_profit, draw,
     net, row_type, range_start_iso, range_end_iso]
     row_type: 1=week_row, 2=period_total. The trailing date range powers the
     frontend drill-down (click a cell → detail for that week). Columns beyond the
@@ -614,12 +620,12 @@ def build_gross_overall(date_from=None, date_to=None):
 
     day_data, t = _collect_pnl_data(start, end, tz)
 
-    headers = ["Hafta", "Savdo", "Tan narxi", "Yalpi foyda", "Xarajatlar", "Op. foyda", "Oylik", "Sof foyda"]
+    headers = ["Hafta", "Savdo", "Tan narxi", "Yalpi foyda", "Xarajatlar", "Op. foyda", "Harajatlar", "Sof foyda"]
     rows = []
 
     # Aggregate by ISO week — emit one summary row per week
     current_week = None
-    w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, other_sal=0.0)
+    w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0)
     week_num = 0
     week_first_day = None
 
@@ -627,13 +633,13 @@ def build_gross_overall(date_from=None, date_to=None):
         cos = w["cos"] + w["prod_sal"]          # Tan narxi = materials + nonvoy pay
         wgp = w["sales"] - cos
         wop = wgp - w["exp"]
-        wnet = wop - w["other_sal"]
+        wnet = wop - w["draw"]
         label = f"Hafta {wn}  ({first_day.strftime('%-d %b')} – {last_day.strftime('%-d %b')})"
-        return [label, w["sales"], cos, wgp, w["exp"], wop, w["other_sal"], wnet, 1,
+        return [label, w["sales"], cos, wgp, w["exp"], wop, w["draw"], wnet, 1,
                 first_day.isoformat(), last_day.isoformat()]
 
     last_day_seen = None
-    for d, sales, mat_cos, exp, prod_sal, other_sal in day_data:
+    for d, sales, mat_cos, exp, prod_sal, draw in day_data:
         iso_week = d.isocalendar()[:2]  # (year, week_number)
 
         if current_week is None:
@@ -645,10 +651,10 @@ def build_gross_overall(date_from=None, date_to=None):
             current_week = iso_week
             week_num += 1
             week_first_day = d
-            w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, other_sal=0.0)
+            w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0)
 
         w["sales"] += sales; w["cos"] += mat_cos; w["exp"] += exp
-        w["prod_sal"] += prod_sal; w["other_sal"] += other_sal
+        w["prod_sal"] += prod_sal; w["draw"] += draw
         last_day_seen = d
 
     # Final week
@@ -659,15 +665,15 @@ def build_gross_overall(date_from=None, date_to=None):
     cos_t = t["cos"] + t["prod_sal"]
     gp_t = t["sales"] - cos_t
     op_t = gp_t - t["exp"]
-    np_t = op_t - t["other_sal"]
+    np_t = op_t - t["draw"]
     is_single_month = (start.year == end.year and start.month == end.month)
     total_label = "Oy jami" if is_single_month else f"Jami ({start.strftime('%d %b')} – {end.strftime('%d %b')})"
-    rows.append([total_label, t["sales"], cos_t, gp_t, t["exp"], op_t, t["other_sal"], np_t, 2,
+    rows.append([total_label, t["sales"], cos_t, gp_t, t["exp"], op_t, t["draw"], np_t, 2,
                  start.isoformat(), end.isoformat()])
 
     return headers, rows, {
         "total_sales": t["sales"], "total_cos": cos_t,
-        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["other_sal"],
+        "total_gross_profit": gp_t, "total_expenses": t["exp"] + t["draw"],
         "total_net_profit": np_t, "count": len([r for r in rows if r[8] == 1]),
     }
 
@@ -902,40 +908,45 @@ class GrossDailyView(APIView):
             })
 
         # ── Expenses & salary for this day ────────────────────────────────
-        # Categories flagged include_in_pnl=False are left out of the P&L.
-        exp_total = float(
+        # Categories flagged include_in_pnl=False are left out of the P&L; the
+        # rest split into operating (Xarajatlar) vs owner draws (Harajatlar),
+        # mirroring _collect_pnl_data.
+        exp_total = 0.0
+        draw_total = 0.0
+        for r in (
             GeneralExpense.objects
             .filter(occurred_at__date=date, currency="UZS")
             .exclude(category__include_in_pnl=False)
-            .aggregate(t=Sum("amount"))["t"] or 0
-        )
-        # Salary: exclude advances (prepayments); subtract deductions. Split by
-        # role — nonvoy (production) pay folds into Tan narxi below; the rest is
-        # the Oylik line — mirroring the P&L tables.
+            .values("category__below_op_profit")
+            .annotate(t=Sum("amount"))
+        ):
+            if r["category__below_op_profit"]:
+                draw_total += float(r["t"] or 0)
+            else:
+                exp_total += float(r["t"] or 0)
+
+        # Salary: only nonvoy (production) pay is a P&L line, folded into Tan
+        # narxi below. Advances excluded (prepayments); deductions subtracted.
         prod_sal_total = 0.0
-        other_sal_total = 0.0
         for r in (
             SalaryPayment.objects
-            .filter(occurred_at__date=date, currency="UZS")
+            .filter(occurred_at__date=date, currency="UZS", user__role="nonvoy")
             .exclude(kind="advance")
-            .values("kind", "user__role")
+            .values("kind")
             .annotate(t=Sum("amount"))
         ):
             amt = float(r["t"] or 0)
             if r["kind"] == "deduction":
                 amt = -amt
-            if r["user__role"] == "nonvoy":
-                prod_sal_total += amt
-            else:
-                other_sal_total += amt
+            prod_sal_total += amt
 
         # Tan narxi = MATERIAL recipe cost of goods delivered today (accrual,
         # matched to sales) PLUS today's nonvoy (production) wages — the direct
-        # cost of making the goods. Remaining wages sit on the Oylik line below.
+        # cost of making the goods.
         cos_display = cost_of_sales + prod_sal_total
         gp = grand_total_sales - cos_display
         op = gp - exp_total
-        net = op - other_sal_total
+        net = op - draw_total
 
         return Response({
             "date": date.isoformat(),
@@ -952,7 +963,7 @@ class GrossDailyView(APIView):
                 "production_salary": prod_sal_total,
                 "gross_profit": gp,
                 "expenses": exp_total,
-                "salary": other_sal_total,
+                "draw": draw_total,
                 "op_profit": op,
                 "net_profit": net,
             },
@@ -991,28 +1002,34 @@ class PnlDetailView(APIView):
             names[p.id] = p.name
 
         # Sales + material/communal/other COGS by product (net delivered, cancelled excluded).
+        # Sales are additionally bucketed by order date — the Savdo drill-down
+        # shows one row per day (date + summa), not a product list.
         items = (
             OrderItem.objects
             .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
             .exclude(order__status="cancelled")
-            .values("product_id", "unit_price", "delivered_quantity", "returned_quantity")
+            .values("order__order_date", "product_id", "unit_price",
+                    "delivered_quantity", "returned_quantity")
         )
         sales_by_p, cos_by_p, communal_by_p, other_by_p, qty_by_p = {}, {}, {}, {}, {}
+        sales_by_day: dict = {}
         for it in items:
             net = max(0, it["delivered_quantity"] - it["returned_quantity"])
             if net == 0:
                 continue
             pid = it["product_id"]
-            sales_by_p[pid] = sales_by_p.get(pid, 0.0) + float(it["unit_price"]) * net
+            amount = float(it["unit_price"]) * net
+            sales_by_p[pid] = sales_by_p.get(pid, 0.0) + amount
             cos_by_p[pid] = cos_by_p.get(pid, 0.0) + ing_per_unit.get(pid, 0.0) * net
             communal_by_p[pid] = communal_by_p.get(pid, 0.0) + communal_per_unit.get(pid, 0.0) * net
             other_by_p[pid] = other_by_p.get(pid, 0.0) + other_per_unit.get(pid, 0.0) * net
             qty_by_p[pid] = qty_by_p.get(pid, 0) + net
-        sales_items = sorted(
-            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid], "amount": sales_by_p[pid]}
-             for pid in sales_by_p],
-            key=lambda x: -x["amount"],
-        )
+            d = it["order__order_date"]
+            sales_by_day[d] = sales_by_day.get(d, 0.0) + amount
+        sales_items = [
+            {"date": d.isoformat(), "amount": sales_by_day[d]}
+            for d in sorted(sales_by_day)
+        ]
         cos_items = sorted(
             [{"name": names.get(pid, "?"), "qty": qty_by_p[pid],
               "unit_cost": ing_per_unit.get(pid, 0.0), "amount": cos_by_p[pid]}
@@ -1036,55 +1053,60 @@ class PnlDetailView(APIView):
         total_communal = sum(communal_by_p.values())
         total_other = sum(other_by_p.values())
 
-        # Expenses — line items (categories flagged include_in_pnl=False excluded).
+        # Expenses — line items (categories flagged include_in_pnl=False excluded),
+        # split into operating (Xarajatlar, above Op. foyda) and owner draws
+        # (Harajatlar, below it) exactly like _collect_pnl_data.
         exp_qs = (
             GeneralExpense.objects
             .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
             .exclude(category__include_in_pnl=False)
             .select_related("category").order_by("-occurred_at")
         )
-        exp_items = [{
-            "date": timezone.localtime(e.occurred_at).strftime("%Y-%m-%d"),
-            "title": e.title,
-            "category": e.category.name if e.category_id else "—",
-            "amount": _dec(e.amount),
-        } for e in exp_qs]
+        exp_items, draw_items = [], []
+        for e in exp_qs:
+            row = {
+                "date": timezone.localtime(e.occurred_at).strftime("%Y-%m-%d"),
+                "title": e.title,
+                "category": e.category.name if e.category_id else "—",
+                "amount": _dec(e.amount),
+            }
+            if e.category_id and e.category.below_op_profit:
+                draw_items.append(row)
+            else:
+                exp_items.append(row)
         total_exp = sum(i["amount"] for i in exp_items)
+        total_draw = sum(i["amount"] for i in draw_items)
 
-        # Salary — line items (advances excluded, deductions subtracted). Split by
-        # role, mirroring _collect_pnl_data so the modal reconciles with the
-        # tables: nonvoy (production) pay folds into Tan narxi (cost of goods),
-        # every other role stays on the Oylik line.
+        # Salary — only nonvoy (production) pay is a P&L line; it folds into Tan
+        # narxi (cost of goods), mirroring _collect_pnl_data so the modal
+        # reconciles with the tables. Advances excluded, deductions subtracted.
         sal_qs = (
             SalaryPayment.objects
-            .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+            .filter(
+                occurred_at__date__gte=start, occurred_at__date__lte=end,
+                currency="UZS", user__role="nonvoy",
+            )
             .exclude(kind="advance").select_related("user").order_by("-occurred_at")
         )
-        prod_sal_items, other_sal_items = [], []
+        prod_sal_items = []
         total_prod_sal = 0.0
-        total_other_sal = 0.0
         for s in sal_qs:
             amt = _dec(s.amount)
             if s.kind == "deduction":
                 amt = -amt
-            row = {
+            total_prod_sal += amt
+            prod_sal_items.append({
                 "date": timezone.localtime(s.occurred_at).strftime("%Y-%m-%d"),
                 "user": s.user.display_name,
                 "kind": s.get_kind_display(),
                 "amount": amt,
-            }
-            if s.user.role == "nonvoy":
-                total_prod_sal += amt
-                prod_sal_items.append(row)
-            else:
-                total_other_sal += amt
-                other_sal_items.append(row)
+            })
 
         # Tan narxi = materials + communal + other (boshqa) + production pay.
         tan = total_cos + total_communal + total_other + total_prod_sal
         gp = total_sales - tan
         op = gp - total_exp
-        net = op - total_other_sal
+        net = op - total_draw
         return Response({
             "date_from": start.isoformat(),
             "date_to": end.isoformat(),
@@ -1101,7 +1123,7 @@ class PnlDetailView(APIView):
                 "salary_items": prod_sal_items,
             },
             "expenses": {"total": total_exp, "items": exp_items},
-            "salary": {"total": total_other_sal, "items": other_sal_items},
+            "draw": {"total": total_draw, "items": draw_items},
             "gross_profit": gp,
             "op_profit": op,
             "net_profit": net,

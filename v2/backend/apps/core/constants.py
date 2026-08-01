@@ -13,6 +13,11 @@ class Currency:
     ]
 
 
+# Fallback UZS per 1 USD. Pre-fills the "Kurs" field on a USD kirim and is used
+# server-side when a USD payment arrives without an explicit rate.
+DEFAULT_USD_RATE = 12000
+
+
 class MeshokBatch:
     """How many units equal one 'meshok' (batch) for production costing."""
 

@@ -1,5 +1,9 @@
+from decimal import Decimal
+
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+
+from apps.core.constants import DEFAULT_USD_RATE, Currency
 
 from .models import (
     CashHandover,
@@ -65,18 +69,38 @@ class PaymentSerializer(serializers.ModelSerializer):
             "id", "shop", "shop_name",
             "order", "order_date",
             "payment_type", "payment_type_display",
-            "currency", "amount", "discount",
+            "currency", "amount", "discount", "exchange_rate",
             "account", "account_name",
             "collected_by", "collected_by_name",
             "received_at", "note", "created_at",
         ]
         read_only_fields = ["created_at"]
 
+    def validate(self, data):
+        # Shops are invoiced in UZS, so a USD kirim needs a rate to settle their
+        # debt. Fall back to the standard rate when the client didn't send one,
+        # and never let a USD payment through with a zero/negative rate.
+        currency = data.get(
+            "currency", getattr(self.instance, "currency", Currency.UZS)
+        )
+        if currency == Currency.USD:
+            rate = data.get(
+                "exchange_rate", getattr(self.instance, "exchange_rate", None)
+            )
+            if not rate or rate <= 0:
+                data["exchange_rate"] = Decimal(DEFAULT_USD_RATE)
+        else:
+            data["exchange_rate"] = Decimal(0)
+        return data
+
 
 class ExpenseCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseCategory
-        fields = ["id", "name", "note", "is_archived", "created_at"]
+        fields = [
+            "id", "name", "note", "is_archived",
+            "include_in_pnl", "below_op_profit", "created_at",
+        ]
         read_only_fields = ["created_at"]
 
 

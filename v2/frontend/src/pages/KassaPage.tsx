@@ -23,7 +23,7 @@ import {
 import { C, TICK, mkTooltip } from "../lib/chart";
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated, Shop } from "../lib/types";
-import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { DEFAULT_USD_RATE, formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
 import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 import { useAuth } from "../lib/auth";
 
@@ -1735,10 +1735,18 @@ function KirimModal({
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
   const [amount, setAmount] = useState("");
   const [discount, setDiscount] = useState("0");
+  // UZS per 1 USD. Shops are invoiced in so'm, so a dollar kirim closes their
+  // debt at this rate; the cash itself stays USD in the kassa.
+  const [rate, setRate] = useState(String(DEFAULT_USD_RATE));
   const [orderDate, setOrderDate] = useState<string>(
     () => nowTashkentStr().slice(0, 10),
   );
   const [note, setNote] = useState("");
+
+  const isUsd = currency === "USD";
+  const rateNum = parseFloat(rate) || 0;
+  const totalUsd = (parseFloat(amount) || 0) + (parseFloat(discount) || 0);
+  const convertedUzs = totalUsd * rateNum;
 
   const { data: shops } = useQuery<Paginated<Shop>>({
     queryKey: ["shops", { archived: false }],
@@ -1755,6 +1763,7 @@ function KirimModal({
         currency,
         amount,
         discount,
+        exchange_rate: isUsd ? rate : "0",
         order_date: orderDate,
         note,
         // Record the kirim on the chosen date (with the current wall-clock time
@@ -1770,7 +1779,7 @@ function KirimModal({
       else onClose();
     },
   });
-  const canSave = !!shopId && !!amount && !create.isPending;
+  const canSave = !!shopId && !!amount && (!isUsd || rateNum > 0) && !create.isPending;
   const saveExit = () => { keepOpen.current = false; if (canSave) create.mutate(); };
   const saveNew = () => { keepOpen.current = true; if (canSave) create.mutate(); };
   useModalHotkeys({ onClose, onSaveExit: saveExit, onSaveNew: saveNew, canSave });
@@ -1837,6 +1846,38 @@ function KirimModal({
               />
             </Field>
           </div>
+          {isUsd && (
+            <>
+              <Field label="Kurs (1 USD = ? UZS)">
+                <input
+                  className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                  inputMode="decimal"
+                />
+              </Field>
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                {totalUsd > 0 && rateNum > 0 ? (
+                  <>
+                    <div className="tabular-nums">
+                      {formatMoney(String(totalUsd), "USD")} × {rateNum.toLocaleString("ru-RU")} ={" "}
+                      <span className="font-semibold">
+                        {formatMoney(String(Math.round(convertedUzs)), "UZS")}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      Do'kon qarzidan shuncha so'm ayiriladi. Naqd pul kassada USD
+                      bo'lib qoladi — so'mga o'tkazish uchun Konvertatsiya.
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground">
+                    Kursni kiriting — do'kon qarzi so'mda yopiladi.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <Field label="Sana (kirim shu kunga yoziladi)">
             <input
               type="date"
@@ -1864,7 +1905,7 @@ function KirimModal({
             Bekor qilish
           </button>
           <button
-            disabled={!shopId || !amount || create.isPending}
+            disabled={!canSave}
             onClick={saveExit}
             className="h-10 px-4 rounded-lg bg-bakery-500 hover:bg-bakery-600 text-white text-sm disabled:opacity-50"
           >
@@ -1880,7 +1921,7 @@ function KirimModal({
 
 interface PaymentDetail {
   id: number; shop: number; shop_name: string;
-  amount: string; discount: string; currency: "UZS" | "USD";
+  amount: string; discount: string; currency: "UZS" | "USD"; exchange_rate: string;
   account: number; note: string; received_at: string; payment_type: string;
 }
 interface ExpenseDetail {
@@ -1975,6 +2016,13 @@ function EditTransactionModal({
   const [title,       setTitle]       = useState("");               // expense only
   const [salaryKind,  setSalaryKind]  = useState("");               // salary payment only
   const [quantity,    setQuantity]    = useState("");               // purchase only
+  const [rate,        setRate]        = useState("");               // USD payment only
+
+  // A USD kirim settles the shop's UZS debt at this rate, so it has to stay
+  // editable alongside the amount — otherwise a corrected amount would be
+  // re-converted at a stale rate.
+  const isUsdPayment = isPayment && paymentData?.currency === "USD";
+  const rateNum = parseFloat(rate) || 0;
 
   // Populate from whichever source record loaded
   useEffect(() => {
@@ -1984,6 +2032,11 @@ function EditTransactionModal({
       setOccurredAt(paymentData.received_at ? fmtDate(paymentData.received_at) : "");
       setOrigTime(paymentData.received_at ? fmtDateTime(paymentData.received_at).slice(11, 16) : "00:00");
       setAccountId(paymentData.account);
+      setRate(
+        paymentData.currency === "USD"
+          ? String(parseFloat(paymentData.exchange_rate) || DEFAULT_USD_RATE)
+          : "",
+      );
     }
   }, [paymentData]);
 
@@ -2050,6 +2103,7 @@ function EditTransactionModal({
       if (isPayment) {
         return api.patch(`/finance/payments/${id}/`, {
           amount, note, received_at: dateIso, account: accountId,
+          ...(isUsdPayment ? { exchange_rate: rate } : {}),
         });
       }
       if (isExpense) {
@@ -2088,6 +2142,7 @@ function EditTransactionModal({
   });
 
   const canSave = !!occurredAt && parseFloat(amount || "0") > 0 && !save.isPending &&
+    (isUsdPayment ? rateNum > 0 : true) &&
     (isTransfer ? !!fromAccount && !!toAccount : !!accountId);
 
   // ── Info label shown at top of form ─────────────────────────────
@@ -2147,6 +2202,26 @@ function EditTransactionModal({
                   <option value="bonus">Bonus</option>
                 </select>
               </Field>
+            )}
+
+            {/* USD payment: exchange rate used to close the shop's UZS debt */}
+            {isUsdPayment && (
+              <>
+                <Field label="Kurs (1 USD = ? UZS)">
+                  <input className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                    value={rate} onChange={(e) => setRate(e.target.value)}
+                    inputMode="decimal" placeholder={String(DEFAULT_USD_RATE)} />
+                </Field>
+                {rateNum > 0 && parseFloat(amount || "0") > 0 && (
+                  <div className="text-xs text-muted-foreground tabular-nums">
+                    Do'kon qarzidan:{" "}
+                    {formatMoney(
+                      String(Math.round((parseFloat(amount) + parseFloat(paymentData?.discount ?? "0")) * rateNum)),
+                      "UZS",
+                    )}
+                  </div>
+                )}
+              </>
             )}
 
             {/* Purchase: quantity */}

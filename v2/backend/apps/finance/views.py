@@ -101,15 +101,25 @@ class KassaTransactionViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 # ─────────────────── Payments (Kirim) ───────────────────
-def _apply_payment_to_shop_balance(payment: Payment):
-    """Subtract payment.amount + payment.discount from shop's per-currency loan balance."""
-    shop = Shop.objects.select_for_update().get(pk=payment.shop_id)
-    delta = payment.amount + payment.discount
-    if payment.currency == "UZS":
-        shop.loan_balance_uzs = F("loan_balance_uzs") - delta
+def _move_shop_balance(shop_id: int, cur: str, delta, sign: int):
+    """Add `sign * delta` to a shop's UZS or USD loan balance.
+
+    `cur`/`delta` come from Payment.loan_delta() so that applying (sign=-1) and
+    reversing (sign=+1) always hit the same balance with the same number — a USD
+    payment that settled UZS debt at a rate must be reversed out of UZS too.
+    """
+    shop = Shop.objects.select_for_update().get(pk=shop_id)
+    if cur == "uzs":
+        shop.loan_balance_uzs = F("loan_balance_uzs") + sign * delta
     else:
-        shop.loan_balance_usd = F("loan_balance_usd") - delta
+        shop.loan_balance_usd = F("loan_balance_usd") + sign * delta
     shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+
+
+def _apply_payment_to_shop_balance(payment: Payment):
+    """Subtract payment.amount + payment.discount from the shop's loan balance."""
+    cur, delta = payment.loan_delta()
+    _move_shop_balance(payment.shop_id, cur, delta, -1)
 
 
 def _apply_payment_to_kassa(payment: Payment):
@@ -177,21 +187,16 @@ class PaymentViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             old = serializer.instance
             old_amount = old.amount
-            old_discount = old.discount
             old_currency = old.currency
             old_account_id = old.account_id
             old_shop_id = old.shop_id
+            # Resolve the old debt movement BEFORE save() mutates the instance.
+            old_loan_cur, old_loan_delta = old.loan_delta()
 
             payment = serializer.save()
 
             # Reverse old shop balance change.
-            old_shop = Shop.objects.select_for_update().get(pk=old_shop_id)
-            old_delta = old_amount + old_discount
-            if old_currency == "UZS":
-                old_shop.loan_balance_uzs = F("loan_balance_uzs") + old_delta
-            else:
-                old_shop.loan_balance_usd = F("loan_balance_usd") + old_delta
-            old_shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+            _move_shop_balance(old_shop_id, old_loan_cur, old_loan_delta, +1)
 
             # Apply new shop balance change.
             _apply_payment_to_shop_balance(payment)
@@ -234,13 +239,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         with transaction.atomic():
             # Reverse shop balance change.
-            shop = Shop.objects.select_for_update().get(pk=instance.shop_id)
-            delta = instance.amount + instance.discount
-            if instance.currency == "UZS":
-                shop.loan_balance_uzs = F("loan_balance_uzs") + delta
-            else:
-                shop.loan_balance_usd = F("loan_balance_usd") + delta
-            shop.save(update_fields=["loan_balance_uzs", "loan_balance_usd"])
+            cur, delta = instance.loan_delta()
+            _move_shop_balance(instance.shop_id, cur, delta, +1)
 
             # Reverse kassa credit.
             account = KassaAccount.objects.select_for_update().get(pk=instance.account_id)

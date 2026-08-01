@@ -934,21 +934,21 @@ function GrossDailyTab() {
           </div>
 
           {/* Expenses detail row */}
-          {(pnl.expenses > 0 || pnl.salary > 0) && (
+          {(pnl.expenses > 0 || pnl.draw > 0) && (
             <div className="grid gap-3 grid-cols-2">
               <div className="rounded-xl border bg-card p-3 flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Xarajatlar</span>
                 <span className="font-semibold tabular-nums">{formatMoney(String(Math.round(pnl.expenses)), "UZS")}</span>
               </div>
               <div className="rounded-xl border bg-card p-3 flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Oylik to'lovlar</span>
-                <span className="font-semibold tabular-nums">{formatMoney(String(Math.round(pnl.salary)), "UZS")}</span>
+                <span className="text-muted-foreground">Harajatlar</span>
+                <span className="font-semibold tabular-nums">{formatMoney(String(Math.round(pnl.draw)), "UZS")}</span>
               </div>
             </div>
           )}
 
           <p className="text-xs text-muted-foreground">
-            Tan narxi = materiallar + kommunal + boshqa + nonvoy ish haqi · Oylik to'lovlar = boshqa xodimlar.
+            Tan narxi = materiallar + kommunal + boshqa + nonvoy ish haqi · Harajatlar = Rizoxon, Bahodir (Op. foydadan keyin).
           </p>
 
           {/* Cross-tab: clients × products */}
@@ -1124,7 +1124,7 @@ const GROSS_METRICS: Record<number, { key: string; label: string }> = {
   3: { key: "gross_profit", label: "Yalpi foyda" },
   4: { key: "expenses", label: "Xarajatlar" },
   5: { key: "op_profit", label: "Op. foyda" },
-  6: { key: "salary", label: "Oylik" },
+  6: { key: "draw", label: "Harajatlar" },
   7: { key: "net_profit", label: "Sof foyda" },
 };
 
@@ -1160,7 +1160,7 @@ function PnlDetailModal({
     { key: "gross_profit", label: "= Yalpi foyda", val: data.gross_profit, sum: true },
     { key: "expenses", label: "− Xarajatlar", val: -data.expenses.total, sum: false },
     { key: "op_profit", label: "= Op. foyda", val: data.op_profit, sum: true },
-    { key: "salary", label: "− Oylik", val: -data.salary.total, sum: false },
+    { key: "draw", label: "− Harajatlar", val: -data.draw.total, sum: false },
     { key: "net_profit", label: "= Sof foyda", val: data.net_profit, sum: true },
   ] : [];
 
@@ -1228,10 +1228,10 @@ function MetricDetail({ k, data }: { k: string; data: any }) {
   if (k === "sales") {
     return (
       <DetailTable
-        title="Mahsulot bo'yicha (yetkazilgan)"
-        head={["Mahsulot", "Miqdor", "Summa"]}
-        rows={data.sales.items.map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.amount} />])}
-        foot={["Jami", "", <Money v={data.sales.total} />]}
+        title="Kun bo'yicha (yetkazilgan)"
+        head={["Sana", "Summa"]}
+        rows={data.sales.items.map((i: any) => [fmtDMY(i.date), <Money v={i.amount} />])}
+        foot={["Jami", <Money v={data.sales.total} />]}
         empty="Savdo yo'q"
       />
     );
@@ -1252,18 +1252,18 @@ function MetricDetail({ k, data }: { k: string; data: any }) {
       />
     );
   }
-  if (k === "salary") {
+  if (k === "draw") {
     return (
       <GroupedDetail
-        items={data.salary.items}
-        total={data.salary.total}
-        groupKey={(i: any) => i.user}
+        items={data.draw.items}
+        total={data.draw.total}
+        groupKey={(i: any) => i.category}
         cols={[
           { render: (i: any) => fmtDMY(i.date) },
-          { render: (i: any) => i.kind },
+          { render: (i: any) => i.title },
           { render: (i: any) => <Money v={i.amount} />, align: "right" },
         ]}
-        empty="Oylik to'lovi yo'q"
+        empty="Harajat yo'q"
       />
     );
   }
@@ -1272,7 +1272,7 @@ function MetricDetail({ k, data }: { k: string; data: any }) {
   if (k === "op_profit")
     return <Formula text={`Op. foyda = Yalpi foyda − Xarajatlar = ${fm(data.gross_profit)} − ${fm(data.expenses.total)} = ${fm(data.op_profit)}`} />;
   if (k === "net_profit")
-    return <Formula text={`Sof foyda = Op. foyda − Oylik = ${fm(data.op_profit)} − ${fm(data.salary.total)} = ${fm(data.net_profit)}`} />;
+    return <Formula text={`Sof foyda = Op. foyda − Harajatlar = ${fm(data.op_profit)} − ${fm(data.draw.total)} = ${fm(data.net_profit)}`} />;
   return null;
 }
 
@@ -1684,7 +1684,8 @@ export function ReportsPage() {
           {(active === "pnl_daily" || active === "gross_overall") && (
             <p className="text-xs text-muted-foreground -mt-1">
               <span className="font-medium text-foreground">Tan narxi</span> = materiallar + kommunal + boshqa + nonvoy ish haqi ·{" "}
-              <span className="font-medium text-foreground">Oylik</span> = boshqa xodimlar (menejer, haydovchi…).{" "}
+              <span className="font-medium text-foreground">Xarajatlar</span> = operatsion xarajatlar ·{" "}
+              <span className="font-medium text-foreground">Harajatlar</span> = Rizoxon, Bahodir (Op. foydadan keyin).{" "}
               {active === "gross_overall" && "Har bir raqamni bosib tarkibini oching."}
             </p>
           )}

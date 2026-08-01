@@ -149,6 +149,18 @@ class Payment(TimestampedModel):
     discount = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0
     )
+    # UZS per 1 USD at the moment the cash was received. Only meaningful when
+    # currency == USD: shops are invoiced in UZS, so a dollar payment settles
+    # (amount + discount) * exchange_rate of the shop's UZS debt. The cash itself
+    # stays USD in the kassa (convert it separately via Konvertatsiya).
+    # 0 = legacy row recorded before the rate existed — those kept settling USD
+    # debt, and the reversal logic must keep treating them that way.
+    exchange_rate = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=0,
+        help_text="1 USD = ? UZS. Faqat USD kirim uchun.",
+    )
 
     account = models.ForeignKey(
         KassaAccount,
@@ -181,6 +193,20 @@ class Payment(TimestampedModel):
         """Total amount that reduces shop debt: cash + discount."""
         return self.amount + self.discount
 
+    def loan_delta(self):
+        """Which shop-debt balance this payment settles, and by how much.
+
+        Returns ("uzs"|"usd", amount). A USD payment with a rate settles UZS debt
+        at that rate (shops are invoiced in UZS); without a rate it falls back to
+        settling USD debt, which is how pre-`exchange_rate` rows were booked.
+        """
+        delta = self.closes_loan_by()
+        if self.currency == Currency.USD:
+            if self.exchange_rate and self.exchange_rate > 0:
+                return "uzs", delta * self.exchange_rate
+            return "usd", delta
+        return "uzs", delta
+
     def __str__(self) -> str:
         return f"{self.shop.name} · {self.amount} {self.currency}"
 
@@ -198,6 +224,15 @@ class ExpenseCategory(TimestampedModel, ArchivableModel):
     include_in_pnl = models.BooleanField(
         default=True,
         help_text="Agar o'chirilsa, bu kategoriya Hisobotlar P&L xarajatlariga kirmaydi.",
+    )
+    # Where the category sits in the P&L waterfall. False = operating cost, on the
+    # "Xarajatlar" line above Op. foyda. True = owner draw (Rizoxon, Bahodir),
+    # moved down onto the "Harajatlar" line between Op. foyda and Sof foyda so it
+    # never depresses operating profit. Only applies when include_in_pnl is True.
+    below_op_profit = models.BooleanField(
+        default=False,
+        verbose_name="Harajatlar (Op. foydadan keyin)",
+        help_text="Yoqilsa, bu kategoriya Xarajatlar emas, Op. foydadan keyingi Harajatlar qatoriga tushadi.",
     )
 
     class Meta:

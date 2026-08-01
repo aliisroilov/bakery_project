@@ -3,6 +3,9 @@ import { twMerge } from "tailwind-merge";
 
 const _TZ = "Asia/Tashkent";
 
+/** Default UZS per 1 USD — pre-fills the "Kurs" field on a USD kirim. */
+export const DEFAULT_USD_RATE = 12000;
+
 /** Current time as "YYYY-MM-DDTHH:MM" in Tashkent local time — for datetime-local inputs. */
 export function nowTashkentStr(): string {
   return new Intl.DateTimeFormat("en-CA", {

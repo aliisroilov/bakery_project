@@ -12,9 +12,9 @@ from .models import (
 
 @admin.register(ExpenseCategory)
 class ExpenseCategoryAdmin(admin.ModelAdmin):
-    list_display = ["name", "include_in_pnl", "note", "created_at"]
-    list_editable = ["include_in_pnl"]
-    list_filter = ["include_in_pnl"]
+    list_display = ["name", "include_in_pnl", "below_op_profit", "note", "created_at"]
+    list_editable = ["include_in_pnl", "below_op_profit"]
+    list_filter = ["include_in_pnl", "below_op_profit"]
     search_fields = ["name"]
     ordering = ["name"]
 
@@ -37,7 +37,7 @@ class KassaTransactionAdmin(admin.ModelAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ["shop", "amount", "currency", "payment_type", "collected_by", "received_at"]
+    list_display = ["shop", "amount", "currency", "exchange_rate", "payment_type", "collected_by", "received_at"]
     list_filter = ["currency", "payment_type"]
     search_fields = ["shop__name"]
     ordering = ["-received_at"]
