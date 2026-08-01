@@ -1124,6 +1124,10 @@ class PnlDetailView(APIView):
             },
             "expenses": {"total": total_exp, "items": exp_items},
             "draw": {"total": total_draw, "items": draw_items},
+            # Deprecated alias for the removed Oylik line — keeps a browser tab
+            # still running a pre-Harajatlar bundle from throwing on
+            # `data.salary.total`.
+            "salary": {"total": 0.0, "items": []},
             "gross_profit": gp,
             "op_profit": op,
             "net_profit": net,
