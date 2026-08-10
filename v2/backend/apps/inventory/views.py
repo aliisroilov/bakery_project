@@ -318,11 +318,29 @@ class InventoryRevisionViewSet(viewsets.ReadOnlyModelViewSet):
         Body: { "items": [{"ingredient_id": N, "new_quantity": "X", "note": "..."}], "note": "..." }
         Returns list of created InventoryRevisionReport rows, grouped by batch_id.
         """
+        from django.db.models import F as _F
+        from django.utils import timezone as _tz
+        from apps.finance.models import ExpenseCategory, GeneralExpense, KassaAccount
+
         items_data = request.data.get("items", [])
         session_note = request.data.get("note", "")
 
         if not items_data:
             return Response({"detail": "items talab qilinadi."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If a kassa account is given, the value of every shortage/surplus is
+        # booked: a shortage (kamomad) is a Chiqim that lowers kassa + shows in
+        # Xarajatlar; a surplus (ortiqcha) is a negative expense that raises kassa
+        # and reduces Xarajatlar (a gain). Missing account → adjust stock only.
+        account = None
+        rev_category = None
+        raw_account = request.data.get("account_id") or request.data.get("account")
+        if raw_account:
+            try:
+                account = KassaAccount.objects.get(pk=int(raw_account))
+            except (KassaAccount.DoesNotExist, ValueError, TypeError):
+                return Response({"detail": "Kassa noto'g'ri."}, status=status.HTTP_400_BAD_REQUEST)
+            rev_category, _ = ExpenseCategory.objects.get_or_create(name="Ombor reviziya")
 
         batch_id = uuid.uuid4()
         created = []
@@ -358,6 +376,38 @@ class InventoryRevisionViewSet(viewsets.ReadOnlyModelViewSet):
                     user=request.user if request.user.is_authenticated else None,
                 )
                 created.append(rev)
+
+                # Book the value difference to the kassa + P&L.
+                if account is not None:
+                    # +value = shortage (loss); −value = surplus (gain).
+                    value = ((old_qty - new_qty) * (ing.avg_cost_uzs or 0)).quantize(Decimal("0.01"))
+                    if value != 0:
+                        exp = GeneralExpense.objects.create(
+                            category=rev_category,
+                            title=f"Reviziya: {ing.name} ({'kamomad' if value > 0 else 'ortiqcha'})",
+                            account=account,
+                            currency="UZS",
+                            amount=value,
+                            occurred_at=_tz.now(),
+                            note=f"Ombor reviziya · {batch_id}",
+                            created_by=request.user if request.user.is_authenticated else None,
+                        )
+                        # Apply to kassa + ledger (mirrors GeneralExpenseViewSet.perform_create):
+                        # negative amount naturally raises the balance (surplus).
+                        acc = KassaAccount.objects.select_for_update().get(pk=account.pk)
+                        acc.balance_uzs = _F("balance_uzs") - value
+                        acc.save(update_fields=["balance_uzs", "balance_usd"])
+                        KassaTransaction.objects.create(
+                            account=account,
+                            kind=KassaTransactionType.GENERAL_EXPENSE,
+                            currency="UZS",
+                            amount=-value,
+                            reference_model="finance.GeneralExpense",
+                            reference_id=exp.id,
+                            note=exp.title,
+                            occurred_at=exp.occurred_at,
+                            created_by=exp.created_by,
+                        )
 
         return Response(
             {

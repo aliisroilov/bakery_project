@@ -483,33 +483,42 @@ def _collect_pnl_data(start, end, tz):
         narxi — they are direct production labour. Advances are excluded (a
         prepayment, not a period expense) and deductions are subtracted.
     """
-    # Material + communal cost per unit for every product: materials at the manual
-    # Ombor price, plus the per-unit communal (gas/electricity) rate. Both are
-    # folded into Tan narxi (COGS); nonvoy labour is added separately below.
+    # Material + communal + other cost PER MESHOK (qop) for every product — the
+    # recipe cost of one batch at the manual Ombor price, plus the per-meshok
+    # communal (gas/electricity) and other rates. Tan narxi is computed by meshok
+    # (batches PRODUCED), not by piece sold; nonvoy labour is added separately.
     price_map = _build_price_map()
-    mat_per_unit = {}
+    mat_per_meshok = {}
     for p in Product.objects.prefetch_related("recipe_items__ingredient__unit"):
         info = _compute_product_cos(p, price_map)
-        mat_per_unit[p.id] = (
-            info["ingredient_per_unit"] + info["communal_per_unit"] + info["other_per_unit"]
-        )
+        mat_per_meshok[p.id] = info["ingredient_total"] + info["communal"] + info["other"]
 
-    # Revenue + material COGS from net-delivered order items (accrual, matched).
+    # Revenue from net-delivered order items (accrual, by order date).
     items_qs = (
         OrderItem.objects
         .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
         .exclude(order__status="cancelled")
-        .values("order__order_date", "product_id", "unit_price", "delivered_quantity", "returned_quantity")
+        .values("order__order_date", "unit_price", "delivered_quantity", "returned_quantity")
     )
     sales_by_date: dict = {}
-    cos_by_date: dict = {}
     for item in items_qs:
         net = max(0, item["delivered_quantity"] - item["returned_quantity"])
         if net == 0:
             continue
         d = item["order__order_date"]
         sales_by_date[d] = sales_by_date.get(d, 0.0) + float(item["unit_price"]) * net
-        cos_by_date[d] = cos_by_date.get(d, 0.0) + mat_per_unit.get(item["product_id"], 0.0) * net
+
+    # Tan narxi (material component) = meshoks PRODUCED that day × per-meshok cost.
+    cos_by_date: dict = {}
+    prod_rows = (
+        Production.objects
+        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
+        .annotate(d=TruncDate("occurred_at", tzinfo=tz))
+        .values("d", "product_id")
+        .annotate(m=Sum("meshok_count"))
+    )
+    for r in prod_rows:
+        cos_by_date[r["d"]] = cos_by_date.get(r["d"], 0.0) + mat_per_meshok.get(r["product_id"], 0.0) * float(r["m"] or 0)
 
     # Expenses — categories flagged include_in_pnl=False are left out of the P&L.
     # The rest split into operating (Xarajatlar) vs owner draws (Harajatlar).
@@ -893,6 +902,7 @@ class GrossDailyView(APIView):
         # consistent (rows sum to their own total).
         production = []
         production_cos_total = 0.0
+        production_material_total = 0.0  # material+communal+other per meshok × meshoks
         for pr in prod_qs:
             pid = pr["product_id"]
             meshoks = float(pr["total_meshoks"] or 0)
@@ -900,6 +910,11 @@ class GrossDailyView(APIView):
             cos_per_meshok = cos_info.get("cos_per_meshok", 0.0)
             cos_total = meshoks * cos_per_meshok
             production_cos_total += cos_total
+            production_material_total += meshoks * (
+                cos_info.get("ingredient_total", 0.0)
+                + cos_info.get("communal", 0.0)
+                + cos_info.get("other", 0.0)
+            )
             production.append({
                 "product": pr["product__name"],
                 "meshoks": meshoks,
@@ -940,10 +955,9 @@ class GrossDailyView(APIView):
                 amt = -amt
             prod_sal_total += amt
 
-        # Tan narxi = MATERIAL recipe cost of goods delivered today (accrual,
-        # matched to sales) PLUS today's nonvoy (production) wages — the direct
-        # cost of making the goods.
-        cos_display = cost_of_sales + prod_sal_total
+        # Tan narxi = material cost of goods PRODUCED today (meshoks × per-meshok
+        # material/communal/other cost) PLUS today's nonvoy (production) wages.
+        cos_display = production_material_total + prod_sal_total
         gp = grand_total_sales - cos_display
         op = gp - exp_total
         net = op - draw_total
@@ -959,7 +973,7 @@ class GrossDailyView(APIView):
             "pnl": {
                 "sales": grand_total_sales,
                 "cos": cos_display,
-                "cos_materials": cost_of_sales,
+                "cos_materials": production_material_total,
                 "production_salary": prod_sal_total,
                 "gross_profit": gp,
                 "expenses": exp_total,
@@ -993,62 +1007,66 @@ class PnlDetailView(APIView):
             return Response({"detail": "Invalid date. Use YYYY-MM-DD."}, status=400)
 
         price_map = _build_price_map()
-        ing_per_unit, communal_per_unit, other_per_unit, names = {}, {}, {}, {}
+        ing_per_meshok, communal_per_meshok, other_per_meshok, names = {}, {}, {}, {}
         for p in Product.objects.prefetch_related("recipe_items__ingredient__unit"):
             info = _compute_product_cos(p, price_map)
-            ing_per_unit[p.id] = info["ingredient_per_unit"]
-            communal_per_unit[p.id] = info["communal_per_unit"]
-            other_per_unit[p.id] = info["other_per_unit"]
+            ing_per_meshok[p.id] = info["ingredient_total"]
+            communal_per_meshok[p.id] = info["communal"]
+            other_per_meshok[p.id] = info["other"]
             names[p.id] = p.name
 
-        # Sales + material/communal/other COGS by product (net delivered, cancelled excluded).
-        # Sales are additionally bucketed by order date — the Savdo drill-down
-        # shows one row per day (date + summa), not a product list.
+        # Savdo drill-down = revenue bucketed by order date (one row per day).
         items = (
             OrderItem.objects
             .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
             .exclude(order__status="cancelled")
-            .values("order__order_date", "product_id", "unit_price",
-                    "delivered_quantity", "returned_quantity")
+            .values("order__order_date", "unit_price", "delivered_quantity", "returned_quantity")
         )
-        sales_by_p, cos_by_p, communal_by_p, other_by_p, qty_by_p = {}, {}, {}, {}, {}
         sales_by_day: dict = {}
         for it in items:
             net = max(0, it["delivered_quantity"] - it["returned_quantity"])
             if net == 0:
                 continue
-            pid = it["product_id"]
-            amount = float(it["unit_price"]) * net
-            sales_by_p[pid] = sales_by_p.get(pid, 0.0) + amount
-            cos_by_p[pid] = cos_by_p.get(pid, 0.0) + ing_per_unit.get(pid, 0.0) * net
-            communal_by_p[pid] = communal_by_p.get(pid, 0.0) + communal_per_unit.get(pid, 0.0) * net
-            other_by_p[pid] = other_by_p.get(pid, 0.0) + other_per_unit.get(pid, 0.0) * net
-            qty_by_p[pid] = qty_by_p.get(pid, 0) + net
             d = it["order__order_date"]
-            sales_by_day[d] = sales_by_day.get(d, 0.0) + amount
+            sales_by_day[d] = sales_by_day.get(d, 0.0) + float(it["unit_price"]) * net
         sales_items = [
             {"date": d.isoformat(), "amount": sales_by_day[d]}
             for d in sorted(sales_by_day)
         ]
+
+        # Tan narxi by product = meshoks PRODUCED in the range × per-meshok cost.
+        cos_by_p, communal_by_p, other_by_p, meshok_by_p = {}, {}, {}, {}
+        prod_rows = (
+            Production.objects
+            .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
+            .values("product_id").annotate(m=Sum("meshok_count"))
+        )
+        for r in prod_rows:
+            pid = r["product_id"]
+            m = float(r["m"] or 0)
+            meshok_by_p[pid] = meshok_by_p.get(pid, 0.0) + m
+            cos_by_p[pid] = cos_by_p.get(pid, 0.0) + ing_per_meshok.get(pid, 0.0) * m
+            communal_by_p[pid] = communal_by_p.get(pid, 0.0) + communal_per_meshok.get(pid, 0.0) * m
+            other_by_p[pid] = other_by_p.get(pid, 0.0) + other_per_meshok.get(pid, 0.0) * m
         cos_items = sorted(
-            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid],
-              "unit_cost": ing_per_unit.get(pid, 0.0), "amount": cos_by_p[pid]}
-             for pid in cos_by_p],
+            [{"name": names.get(pid, "?"), "qty": meshok_by_p[pid],
+              "unit_cost": ing_per_meshok.get(pid, 0.0), "amount": cos_by_p[pid]}
+             for pid in cos_by_p if cos_by_p[pid] > 0],
             key=lambda x: -x["amount"],
         )
         communal_items = sorted(
-            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid],
-              "unit_cost": communal_per_unit.get(pid, 0.0), "amount": communal_by_p[pid]}
+            [{"name": names.get(pid, "?"), "qty": meshok_by_p[pid],
+              "unit_cost": communal_per_meshok.get(pid, 0.0), "amount": communal_by_p[pid]}
              for pid in communal_by_p if communal_by_p[pid] > 0],
             key=lambda x: -x["amount"],
         )
         other_items = sorted(
-            [{"name": names.get(pid, "?"), "qty": qty_by_p[pid],
-              "unit_cost": other_per_unit.get(pid, 0.0), "amount": other_by_p[pid]}
+            [{"name": names.get(pid, "?"), "qty": meshok_by_p[pid],
+              "unit_cost": other_per_meshok.get(pid, 0.0), "amount": other_by_p[pid]}
              for pid in other_by_p if other_by_p[pid] > 0],
             key=lambda x: -x["amount"],
         )
-        total_sales = sum(sales_by_p.values())
+        total_sales = sum(sales_by_day.values())
         total_cos = sum(cos_by_p.values())
         total_communal = sum(communal_by_p.values())
         total_other = sum(other_by_p.values())

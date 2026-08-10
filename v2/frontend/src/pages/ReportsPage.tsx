@@ -948,7 +948,7 @@ function GrossDailyTab() {
           )}
 
           <p className="text-xs text-muted-foreground">
-            Tan narxi = materiallar + kommunal + boshqa + nonvoy ish haqi · Harajatlar = Rizoxon, Bahodir (Op. foydadan keyin).
+            Tan narxi = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + nonvoy ish haqi · Harajatlar = Rizoxon, Bahodir (Op. foydadan keyin).
           </p>
 
           {/* Cross-tab: clients × products */}
@@ -1282,7 +1282,7 @@ function CosDetail({ cos }: { cos: any }) {
     <div className="space-y-3">
       <DetailTable
         title={`Materiallar — ${fm(cos.materials_total ?? cos.total)}`}
-        head={["Mahsulot", "Miqdor", "Tannarx/dona", "Summa"]}
+        head={["Mahsulot", "Qop", "1 qop", "Summa"]}
         rows={(cos.items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
         foot={["Jami", "", "", <Money v={cos.materials_total ?? cos.total} />]}
         empty="Material tannarxi yo'q"
@@ -1290,7 +1290,7 @@ function CosDetail({ cos }: { cos: any }) {
       {(cos.communal_total ?? 0) > 0 && (
         <DetailTable
           title={`Kommunal (gaz/svet) — ${fm(cos.communal_total)}`}
-          head={["Mahsulot", "Miqdor", "1 dona", "Summa"]}
+          head={["Mahsulot", "Qop", "1 qop", "Summa"]}
           rows={(cos.communal_items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
           foot={["Jami", "", "", <Money v={cos.communal_total} />]}
           empty="Kommunal xarajat yo'q"
@@ -1299,7 +1299,7 @@ function CosDetail({ cos }: { cos: any }) {
       {(cos.other_total ?? 0) > 0 && (
         <DetailTable
           title={`Boshqa — ${fm(cos.other_total)}`}
-          head={["Mahsulot", "Miqdor", "1 dona", "Summa"]}
+          head={["Mahsulot", "Qop", "1 qop", "Summa"]}
           rows={(cos.other_items ?? []).map((i: any) => [i.name, i.qty.toLocaleString(), <Money v={i.unit_cost} />, <Money v={i.amount} />])}
           foot={["Jami", "", "", <Money v={cos.other_total} />]}
           empty="Boshqa xarajat yo'q"
@@ -1683,7 +1683,7 @@ export function ReportsPage() {
 
           {(active === "pnl_daily" || active === "gross_overall") && (
             <p className="text-xs text-muted-foreground -mt-1">
-              <span className="font-medium text-foreground">Tan narxi</span> = materiallar + kommunal + boshqa + nonvoy ish haqi ·{" "}
+              <span className="font-medium text-foreground">Tan narxi</span> = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + nonvoy ish haqi ·{" "}
               <span className="font-medium text-foreground">Xarajatlar</span> = operatsion xarajatlar ·{" "}
               <span className="font-medium text-foreground">Harajatlar</span> = Rizoxon, Bahodir (Op. foydadan keyin).{" "}
               {active === "gross_overall" && "Har bir raqamni bosib tarkibini oching."}
