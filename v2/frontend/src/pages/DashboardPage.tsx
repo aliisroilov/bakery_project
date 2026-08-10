@@ -165,7 +165,7 @@ export function DashboardPage() {
         <StatCard
           to="/finance"
           icon={<Wallet className="size-5" />}
-          label="Seyf"
+          label={isToday ? "Seyf" : "Seyf (kun oxiriga)"}
           primary={seyf ? formatMoney(seyf.balance_uzs, "UZS") : "—"}
           secondary={seyf ? formatMoney(seyf.balance_usd, "USD") : "UZS / USD"}
           loading={isLoading}
@@ -173,7 +173,7 @@ export function DashboardPage() {
         <StatCard
           to="/finance"
           icon={<Wallet className="size-5" />}
-          label="Rizoxon"
+          label={isToday ? "Rizoxon" : "Rizoxon (kun oxiriga)"}
           primary={rizoxon ? formatMoney(rizoxon.balance_uzs, "UZS") : "—"}
           secondary={rizoxon ? formatMoney(rizoxon.balance_usd, "USD") : "UZS / USD"}
           loading={isLoading}

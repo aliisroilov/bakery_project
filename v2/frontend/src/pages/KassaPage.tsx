@@ -14,6 +14,7 @@ import {
   Repeat,
   Pencil,
   Info,
+  Search,
   X,
 } from "lucide-react";
 import { PurchaseModal, type Ingredient } from "./InventoryPage";
@@ -211,6 +212,8 @@ export function KassaPage() {
   const [reportTo, setReportTo] = useState<string>(today);
   const [txFrom, setTxFrom] = useState<string>("");
   const [txTo, setTxTo] = useState<string>("");
+  const [txSearch, setTxSearch] = useState("");
+  const [txSearchField, setTxSearchField] = useState<"name" | "note" | "amount">("name");
 
   const { data: accounts } = useQuery<Paginated<KassaAccount>>({
     queryKey: ["kassa", "accounts"],
@@ -236,6 +239,28 @@ export function KassaPage() {
     },
     refetchInterval: 30_000,
   });
+
+  // Client-side search over the loaded transactions, by chosen field.
+  const filteredTxs = useMemo(() => {
+    const rows = txs?.results ?? [];
+    const q = txSearch.trim().toLowerCase();
+    if (!q) return rows;
+    if (txSearchField === "amount") {
+      const digits = q.replace(/[^0-9]/g, "");
+      return digits
+        ? rows.filter((t) => Math.round(Math.abs(parseFloat(t.amount))).toString().includes(digits))
+        : rows;
+    }
+    if (txSearchField === "note") {
+      return rows.filter((t) => `${t.note} ${t.source_note ?? ""}`.toLowerCase().includes(q));
+    }
+    // "name" — the descriptive text (type + kassa + who/what)
+    return rows.filter((t) =>
+      `${t.kind_display} ${t.account_name} ${t.note} ${t.source_note ?? ""} ${t.created_by_name ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [txs, txSearch, txSearchField]);
 
   const { data: handoverReport } = useQuery<DriverHandoverReport>({
     queryKey: ["kassa", "handover-report", reportFrom, reportTo],
@@ -462,6 +487,25 @@ export function KassaPage() {
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm flex-wrap">
+            <div className="relative">
+              <Search className="size-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                value={txSearch}
+                onChange={(e) => setTxSearch(e.target.value)}
+                placeholder="Qidirish…"
+                className="h-9 w-40 sm:w-48 rounded-lg border bg-background pl-8 pr-2 text-sm"
+              />
+            </div>
+            <select
+              value={txSearchField}
+              onChange={(e) => setTxSearchField(e.target.value as "name" | "note" | "amount")}
+              className="h-9 rounded-lg border bg-background px-2 text-sm"
+              title="Qidirish maydoni"
+            >
+              <option value="name">Nomi</option>
+              <option value="note">Izoh</option>
+              <option value="amount">Summa</option>
+            </select>
             <input
               type="date"
               value={txFrom}
@@ -501,14 +545,14 @@ export function KassaPage() {
             </tr>
           </thead>
           <tbody className="divide-y">
-            {txs?.results.length === 0 && (
+            {filteredTxs.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
                   Harakatlar hali yo'q
                 </td>
               </tr>
             )}
-            {txs?.results.map((tx) => {
+            {filteredTxs.map((tx) => {
               const inbound = parseFloat(tx.amount) >= 0;
               const canEdit = EDITABLE_KINDS.has(tx.kind) && !!tx.reference_id;
               return (
@@ -568,12 +612,12 @@ export function KassaPage() {
 
         {/* Mobile cards */}
         <div className="md:hidden divide-y">
-          {txs?.results.length === 0 && (
+          {filteredTxs.length === 0 && (
             <div className="px-4 py-10 text-center text-muted-foreground text-sm">
               Harakatlar hali yo'q
             </div>
           )}
-          {txs?.results.map((tx) => {
+          {filteredTxs.map((tx) => {
             const inbound = parseFloat(tx.amount) >= 0;
             const canEdit = EDITABLE_KINDS.has(tx.kind) && !!tx.reference_id;
             return (

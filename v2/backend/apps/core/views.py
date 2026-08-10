@@ -54,15 +54,28 @@ class DashboardSummaryView(APIView):
         month_start = _month_start(sel_date)
 
         # ── Kassa balances (Seyf + Rizoxon) ─────────────────────────
-        accounts = [
-            {
+        # For a past day, show the balance AS OF the end of that day: anchor to
+        # the current balance and subtract every transaction that happened after
+        # it (same approach as the shop debt timeline).
+        from apps.finance.models import KassaTransaction
+        accounts = []
+        for a in KassaAccount.objects.all():
+            bal_uzs, bal_usd = a.balance_uzs, a.balance_usd
+            if not is_today:
+                after = (
+                    KassaTransaction.objects
+                    .filter(account=a, occurred_at__gt=today_end)
+                    .values("currency").annotate(s=Sum("amount"))
+                )
+                after_map = {r["currency"]: (r["s"] or 0) for r in after}
+                bal_uzs = a.balance_uzs - after_map.get("UZS", 0)
+                bal_usd = a.balance_usd - after_map.get("USD", 0)
+            accounts.append({
                 "slug": a.slug,
                 "name": a.name,
-                "balance_uzs": str(a.balance_uzs),
-                "balance_usd": str(a.balance_usd),
-            }
-            for a in KassaAccount.objects.all()
-        ]
+                "balance_uzs": str(bal_uzs),
+                "balance_usd": str(bal_usd),
+            })
 
         # ── Today's kirim (payments received today) ─────────────────
         today_payments = Payment.objects.filter(
@@ -170,6 +183,29 @@ class DashboardSummaryView(APIView):
             uzs=Sum("loan_balance_uzs"),
             usd=Sum("loan_balance_usd"),
         )
+        total_loan_uzs = totals["uzs"] or 0
+        total_loan_usd = totals["usd"] or 0
+        if not is_today:
+            # Debt AS OF end of sel_date: current − deliveries after + payments after.
+            from apps.orders.models import OrderItem
+            from django.db.models import DecimalField
+
+            def _deliv_after(cur):
+                return OrderItem.objects.filter(
+                    order__shop__is_archived=False, order__currency=cur,
+                    order__order_date__gt=sel_date,
+                ).exclude(order__status="cancelled").aggregate(
+                    v=Sum(F("delivered_quantity") * F("unit_price"), output_field=DecimalField())
+                )["v"] or 0
+
+            def _pay_after(cur):
+                agg = Payment.objects.filter(
+                    shop__is_archived=False, currency=cur, received_at__gt=today_end,
+                ).aggregate(a=Sum("amount"), d=Sum("discount"))
+                return (agg["a"] or 0) + (agg["d"] or 0)
+
+            total_loan_uzs = total_loan_uzs - _deliv_after("UZS") + _pay_after("UZS")
+            total_loan_usd = total_loan_usd - _deliv_after("USD") + _pay_after("USD")
 
         # ── Net income today (feature #11) ──────────────────────────
         # Formula: revenue (kirim) - all cash outflows for the day
@@ -216,8 +252,8 @@ class DashboardSummaryView(APIView):
                     "delivered": orders_today_delivered,
                 },
                 "loans_total": {
-                    "uzs": str(totals["uzs"] or 0),
-                    "usd": str(totals["usd"] or 0),
+                    "uzs": str(total_loan_uzs),
+                    "usd": str(total_loan_usd),
                 },
                 "production": {
                     "today": {
