@@ -176,6 +176,13 @@ class ShopViewSet(viewsets.ModelViewSet):
         for r in pay:
             daily[r["d"]]["paid"] += float(r["a"] or 0) + float(r["disc"] or 0)
 
+        # Balance AS OF the end of the selected range (dt): current minus every
+        # net change that happened after dt.
+        balance_as_of = current
+        for day, v in daily.items():
+            if day > dt:
+                balance_as_of -= (v["delivered"] - v["paid"])
+
         # Walk days newest→oldest, anchoring the running balance to `current`.
         running = current
         rows = []
@@ -198,6 +205,7 @@ class ShopViewSet(viewsets.ModelViewSet):
             "date_from": df.isoformat(),
             "date_to": dt.isoformat(),
             "current_balance_uzs": round(current, 2),
+            "balance_as_of": round(balance_as_of, 2),  # as of end of dt
             "days": rows,  # newest first
         })
 

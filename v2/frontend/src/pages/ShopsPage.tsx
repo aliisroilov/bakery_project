@@ -471,6 +471,7 @@ function DebtTimelineModal({ shop, onClose }: { shop: Shop; onClose: () => void 
   const { data, isFetching } = useQuery<{
     shop: string;
     current_balance_uzs: number;
+    balance_as_of: number;
     days: { date: string; delivered: number; paid: number; net: number; balance_after: number }[];
   }>({
     queryKey: ["shops", "debt-timeline", shop.id, from, to],
@@ -491,9 +492,9 @@ function DebtTimelineModal({ shop, onClose }: { shop: Shop; onClose: () => void 
               <History className="size-5 text-bakery-500" /> {shop.name}
             </h3>
             <div className="text-sm mt-1">
-              Hozirgi qoldiq:{" "}
+              {to === today ? "Hozirgi qoldiq" : `Qoldiq (${fmtDMY(to)} holatiga)`}:{" "}
               <span className="font-semibold tabular-nums">
-                {formatMoney(String(Math.round(data?.current_balance_uzs ?? parseFloat(shop.loan_balance_uzs))), "UZS")}
+                {formatMoney(String(Math.round(data?.balance_as_of ?? data?.current_balance_uzs ?? parseFloat(shop.loan_balance_uzs))), "UZS")}
               </span>
             </div>
           </div>

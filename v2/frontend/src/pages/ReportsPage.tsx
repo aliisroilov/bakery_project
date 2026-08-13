@@ -595,6 +595,54 @@ function CosTab() {
 }
 
 // ─── SOFP tab ─────────────────────────────────────────────────────────────────
+// One tile of the balance-sheet equation (Aktivlar − Majburiyatlar = Sof qiymat).
+function EqTile({ label, op, uzs, usd, tone }: {
+  label: string; op?: string; uzs: number; usd?: number; tone: "asset" | "liability" | "net";
+}) {
+  const box = {
+    asset: "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900",
+    liability: "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900",
+    net: "bg-bakery-500 text-white border-bakery-500 shadow-sm",
+  }[tone];
+  const sub = tone === "net" ? "text-white/75" : "text-muted-foreground";
+  return (
+    <div className={`rounded-2xl border p-4 sm:p-5 ${box}`}>
+      <div className={`flex items-center gap-1.5 text-xs sm:text-sm ${sub}`}>
+        {op && <span className="font-semibold">{op}</span>}{label}
+      </div>
+      <div className="mt-1.5 text-xl sm:text-2xl font-bold tabular-nums">
+        {formatMoney(String(Math.round(uzs)), "UZS")}
+      </div>
+      {(usd ?? 0) !== 0 && (
+        <div className={`text-sm font-medium tabular-nums ${sub}`}>{formatMoney(String(usd), "USD")}</div>
+      )}
+    </div>
+  );
+}
+
+// A balance-sheet section (Aktivlar / Majburiyatlar) — accent bar, title, total.
+function SofpSection({ title, accent, total, totalUsd, children }: {
+  title: string; accent: string; total: number; totalUsd?: number; children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-end justify-between gap-3 border-b pb-2">
+        <div className="flex items-center gap-2">
+          <span className={`inline-block w-1.5 h-5 rounded-full ${accent}`} />
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+        </div>
+        <div className="text-right leading-tight">
+          <div className="text-base font-bold tabular-nums">{formatMoney(String(Math.round(total)), "UZS")}</div>
+          {(totalUsd ?? 0) !== 0 && (
+            <div className="text-xs text-muted-foreground tabular-nums">{formatMoney(String(totalUsd), "USD")}</div>
+          )}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function SofpTab() {
   const { data, isFetching, refetch } = useQuery<any>({
     queryKey: ["reports", "sofp"],
@@ -606,15 +654,16 @@ function SofpTab() {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        {data && (
-          <p className="text-sm text-muted-foreground">Sana: <strong>{data.as_of}</strong></p>
-        )}
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold">Moliyaviy holat (balans)</h2>
+          {data && <p className="text-xs text-muted-foreground">{data.as_of} holatiga</p>}
+        </div>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="h-9 px-3 rounded-lg border text-sm hover:bg-muted inline-flex items-center gap-1.5 disabled:opacity-50 ml-auto"
+          className="h-9 px-3 rounded-lg border text-sm hover:bg-muted inline-flex items-center gap-1.5 disabled:opacity-50"
         >
           <RefreshCw className={"size-3.5 " + (isFetching ? "animate-spin" : "")} />
           Yangilash
@@ -623,61 +672,14 @@ function SofpTab() {
 
       {data && (
         <>
-          {/* Summary cards */}
-          <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border bg-card p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <DollarSign className="size-4 text-green-500" />
-                <span className="text-xs text-muted-foreground">Naqd pul (kassalar)</span>
-              </div>
-              <div className="text-lg font-bold tabular-nums">
-                {formatMoney(String(Math.round(data.cash.total_uzs)), "UZS")}
-              </div>
-              {data.cash.total_usd > 0 && (
-                <div className="text-sm font-semibold tabular-nums text-muted-foreground">
-                  {formatMoney(String(data.cash.total_usd), "USD")}
-                </div>
-              )}
-            </div>
-            <div className="rounded-xl border bg-card p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="size-4 text-blue-500" />
-                <span className="text-xs text-muted-foreground">Do'kon qarzlari</span>
-              </div>
-              <div className="text-lg font-bold tabular-nums">
-                {formatMoney(String(Math.round(data.receivables.total_uzs)), "UZS")}
-              </div>
-              {data.receivables.total_usd > 0 && (
-                <div className="text-sm font-semibold tabular-nums text-muted-foreground">
-                  {formatMoney(String(data.receivables.total_usd), "USD")}
-                </div>
-              )}
-            </div>
-            <div className="rounded-xl border bg-card p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Warehouse className="size-4 text-amber-500" />
-                <span className="text-xs text-muted-foreground">Ombor qiymati</span>
-              </div>
-              <div className="text-lg font-bold tabular-nums">
-                {formatMoney(String(Math.round(data.inventory.total_uzs)), "UZS")}
-              </div>
-            </div>
-            <div className="rounded-xl border bg-bakery-500 text-white p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <BarChart3 className="size-4 text-white/80" />
-                <span className="text-xs text-white/80">Jami aktivlar</span>
-              </div>
-              <div className="text-lg font-bold tabular-nums">
-                {formatMoney(String(Math.round(data.total_assets_uzs)), "UZS")}
-              </div>
-              {data.total_assets_usd > 0 && (
-                <div className="text-sm font-semibold tabular-nums text-white/80">
-                  {formatMoney(String(data.total_assets_usd), "USD")}
-                </div>
-              )}
-            </div>
+          {/* Balance-sheet equation: Aktivlar − Majburiyatlar = Sof qiymat */}
+          <div className="grid gap-3 grid-cols-1 sm:grid-cols-3">
+            <EqTile label="Jami aktivlar" uzs={data.total_assets_uzs} usd={data.total_assets_usd} tone="asset" />
+            <EqTile op="−" label="Majburiyatlar" uzs={data.liabilities?.total_uzs ?? 0} usd={data.liabilities?.total_usd ?? 0} tone="liability" />
+            <EqTile op="=" label="Sof qiymat" uzs={data.net_worth_uzs ?? data.total_assets_uzs} usd={data.net_worth_usd ?? 0} tone="net" />
           </div>
 
+          <SofpSection title="Aktivlar" accent="bg-emerald-500" total={data.total_assets_uzs} totalUsd={data.total_assets_usd}>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Cash */}
             <div className="rounded-xl border bg-card overflow-hidden">
@@ -795,13 +797,13 @@ function SofpTab() {
               </div>
             </div>
           </div>
+          </SofpSection>
 
-          {/* Liabilities (customer credits) + net worth */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <SofpSection title="Majburiyatlar" accent="bg-red-500" total={data.liabilities?.total_uzs ?? 0} totalUsd={data.liabilities?.total_usd ?? 0}>
             <div className="rounded-xl border bg-card overflow-hidden">
               <div className="px-5 py-3 border-b font-semibold text-sm flex items-center gap-2">
                 <TrendingUp className="size-4 rotate-180 text-red-500" />
-                Majburiyatlar
+                Do'kon kreditlari va oylik qarzdorligi
               </div>
               {(() => {
                 const credits = (data.liabilities?.customer_credits?.items as any[]) ?? [];
@@ -844,24 +846,10 @@ function SofpTab() {
                 );
               })()}
             </div>
-            <div className="rounded-xl border bg-card p-5 flex flex-col justify-center">
-              <div className="flex items-center gap-2 mb-2">
-                <BarChart3 className="size-4 text-bakery-500" />
-                <span className="text-sm text-muted-foreground">Sof qiymat (aktivlar − majburiyatlar)</span>
-              </div>
-              <div className="text-2xl font-bold tabular-nums">
-                {formatMoney(String(Math.round(data.net_worth_uzs ?? data.total_assets_uzs)), "UZS")}
-              </div>
-              {(data.net_worth_usd ?? 0) !== 0 && (
-                <div className="text-sm font-semibold tabular-nums text-muted-foreground mt-0.5">
-                  {formatMoney(String(data.net_worth_usd), "USD")}
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
-                Naqd + do'kon qarzlari + ombor qiymati, do'kon kreditlari va oylik qarzdorligi ayirilgan holda.
-              </p>
-            </div>
-          </div>
+            <p className="text-xs text-muted-foreground">
+              Sof qiymat = Aktivlar − Majburiyatlar (naqd + do'kon qarzlari + ombor qiymati, minus do'kon kreditlari va oylik qarzdorligi).
+            </p>
+          </SofpSection>
         </>
       )}
     </div>
@@ -1224,18 +1212,43 @@ function PnlDetailModal({
 
 // Inline breakdown for one waterfall row. Component rows show their line items;
 // derived rows (gross/op/net) show the formula that produced them.
-function MetricDetail({ k, data }: { k: string; data: any }) {
-  if (k === "sales") {
-    return (
-      <DetailTable
-        title="Kun bo'yicha (yetkazilgan)"
-        head={["Sana", "Summa"]}
-        rows={data.sales.items.map((i: any) => [fmtDMY(i.date), <Money v={i.amount} />])}
-        foot={["Jami", <Money v={data.sales.total} />]}
-        empty="Savdo yo'q"
-      />
-    );
+// Savdo drill-down — sales by day, filterable by product (#1).
+function SalesDetail({ sales }: { sales: any }) {
+  const [productId, setProductId] = useState<number | "">("");
+  const products = (sales.products ?? []) as { id: number; name: string }[];
+  let rows: any[][];
+  let total: number;
+  if (productId === "") {
+    rows = (sales.items ?? []).map((i: any) => [fmtDMY(i.date), <Money v={i.amount} />]);
+    total = sales.total;
+  } else {
+    const byDate: Record<string, number> = {};
+    ((sales.rows ?? []) as any[])
+      .filter((r) => r.product_id === productId)
+      .forEach((r) => { byDate[r.date] = (byDate[r.date] ?? 0) + r.amount; });
+    const sorted = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0]));
+    total = sorted.reduce((s, [, v]) => s + v, 0);
+    rows = sorted.map(([d, v]) => [fmtDMY(d), <Money v={v} />]);
   }
+  return (
+    <div className="space-y-2">
+      {products.length > 0 && (
+        <select
+          value={productId}
+          onChange={(e) => setProductId(e.target.value ? Number(e.target.value) : "")}
+          className="w-full h-9 rounded-lg border bg-background px-2 text-sm"
+        >
+          <option value="">Barcha mahsulotlar</option>
+          {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      )}
+      <DetailTable head={["Sana", "Summa"]} rows={rows} foot={["Jami", <Money v={total} />]} empty="Savdo yo'q" />
+    </div>
+  );
+}
+
+function MetricDetail({ k, data }: { k: string; data: any }) {
+  if (k === "sales") return <SalesDetail sales={data.sales} />;
   if (k === "cos") return <CosDetail cos={data.cos} />;
   if (k === "expenses") {
     return (

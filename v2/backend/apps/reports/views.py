@@ -1015,24 +1015,40 @@ class PnlDetailView(APIView):
             other_per_meshok[p.id] = info["other"]
             names[p.id] = p.name
 
-        # Savdo drill-down = revenue bucketed by order date (one row per day).
+        # Savdo drill-down = revenue bucketed by order date (one row per day),
+        # plus a per-product breakdown so the frontend can filter by product.
         items = (
             OrderItem.objects
             .filter(order__order_date__gte=start, order__order_date__lte=end, order__currency="UZS")
             .exclude(order__status="cancelled")
-            .values("order__order_date", "unit_price", "delivered_quantity", "returned_quantity")
+            .values("order__order_date", "product_id", "unit_price",
+                    "delivered_quantity", "returned_quantity")
         )
         sales_by_day: dict = {}
+        sales_by_pd: dict = {}   # (product_id, date) → amount
+        prod_had_sales = set()
         for it in items:
             net = max(0, it["delivered_quantity"] - it["returned_quantity"])
             if net == 0:
                 continue
             d = it["order__order_date"]
-            sales_by_day[d] = sales_by_day.get(d, 0.0) + float(it["unit_price"]) * net
+            pid = it["product_id"]
+            amt = float(it["unit_price"]) * net
+            sales_by_day[d] = sales_by_day.get(d, 0.0) + amt
+            sales_by_pd[(pid, d)] = sales_by_pd.get((pid, d), 0.0) + amt
+            prod_had_sales.add(pid)
         sales_items = [
             {"date": d.isoformat(), "amount": sales_by_day[d]}
             for d in sorted(sales_by_day)
         ]
+        sales_rows = [
+            {"product_id": pid, "date": d.isoformat(), "amount": amt}
+            for (pid, d), amt in sales_by_pd.items()
+        ]
+        sales_products = sorted(
+            ({"id": pid, "name": names.get(pid, "?")} for pid in prod_had_sales),
+            key=lambda x: x["name"],
+        )
 
         # Tan narxi by product = meshoks PRODUCED in the range × per-meshok cost.
         cos_by_p, communal_by_p, other_by_p, meshok_by_p = {}, {}, {}, {}
@@ -1128,7 +1144,8 @@ class PnlDetailView(APIView):
         return Response({
             "date_from": start.isoformat(),
             "date_to": end.isoformat(),
-            "sales": {"total": total_sales, "items": sales_items},
+            "sales": {"total": total_sales, "items": sales_items,
+                      "products": sales_products, "rows": sales_rows},
             "cos": {
                 "total": tan,
                 "materials_total": total_cos,
