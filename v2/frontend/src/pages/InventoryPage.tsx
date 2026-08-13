@@ -605,7 +605,9 @@ export function PurchaseModal({
 
   const qtyNum = parseFloat(quantity) || 0;
   const unitNum = parseFloat(unitPrice) || 0;
-  const totalPrice = qtyNum > 0 && unitNum > 0 ? (qtyNum * unitNum).toFixed(2) : "";
+  // Compute unconditionally so a 0-qty purchase still sends total_price (0.00) —
+  // lets you register an ingredient in inventory without buying stock yet.
+  const totalPrice = (qtyNum * unitNum).toFixed(2);
 
   const selectedIng = ingredients.find((i) => i.id === ingredientId);
   const unitShort = selectedIng?.unit_short ?? "";
@@ -639,7 +641,9 @@ export function PurchaseModal({
     },
   });
 
-  const canSave = !!(ingredientId && accountId && qtyNum > 0 && unitNum > 0);
+  // Quantity may be 0 (register an ingredient without stock); only require a
+  // chosen ingredient + kassa, and non-negative numbers.
+  const canSave = !!(ingredientId && accountId) && qtyNum >= 0 && unitNum >= 0;
   useModalHotkeys({
     onClose,
     onSaveExit: () => { if (canSave && !create.isPending) create.mutate(); },
@@ -719,7 +723,7 @@ export function PurchaseModal({
               />
             </Field>
           </div>
-          {totalPrice && (
+          {qtyNum > 0 && unitNum > 0 && (
             <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground flex justify-between">
               <span>Umumiy summa ({currency}):</span>
               <span className="font-semibold text-foreground tabular-nums">
