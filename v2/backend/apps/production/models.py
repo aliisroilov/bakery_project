@@ -143,6 +143,15 @@ class InventoryRevisionReport(TimestampedModel):
         max_digits=QTY_MAX_DIGITS, decimal_places=QTY_DECIMAL_PLACES
     )
     note = models.TextField(blank=True)
+    # Monetary value of the discrepancy at revision time (UZS):
+    # (old_quantity − new_quantity) × ingredient avg_cost_uzs. Positive = shortage
+    # (kamomad — a loss that ADDS to Tan narxi/COGS); negative = surplus (ortiqcha —
+    # reduces COGS). Snapshotted on creation so later avg-cost drift can't distort
+    # it. Null for product revisions and legacy rows. This is NOT a cash movement —
+    # reviziya adjusts inventory value into cost of goods, never the kassa.
+    value_uzs = models.DecimalField(
+        max_digits=16, decimal_places=2, null=True, blank=True
+    )
     batch_id = models.UUIDField(null=True, blank=True, db_index=True)
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

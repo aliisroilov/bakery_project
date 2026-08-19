@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 from apps.finance.models import GeneralExpense, KassaAccount, Payment
 from apps.inventory.models import Ingredient, Purchase
 from apps.orders.models import Order, OrderItem
-from apps.production.models import Production
+from apps.production.models import InventoryRevisionReport, Production
 from apps.products.models import Product
 from apps.salary.models import SalaryPayment
 from apps.shops.models import Shop
@@ -559,9 +559,25 @@ def _collect_pnl_data(start, end, tz):
             amt = -amt
         prod_sal_by_date[r["d"]] = prod_sal_by_date.get(r["d"], 0.0) + amt
 
+    # Reviziya (inventory recount) variance folds into Tan narxi — a NON-CASH
+    # adjustment. +value = shortage (kamomad, adds to COGS); −value = surplus
+    # (ortiqcha, reduces it). Snapshotted per row as value_uzs at revision time,
+    # bucketed by the day the recount happened.
+    rev_by_date: dict = {}
+    rev_rows = (
+        InventoryRevisionReport.objects
+        .filter(item_type="ingredient", value_uzs__isnull=False,
+                created_at__date__gte=start, created_at__date__lte=end)
+        .annotate(d=TruncDate("created_at", tzinfo=tz))
+        .values("d")
+        .annotate(total=Sum("value_uzs"))
+    )
+    for r in rev_rows:
+        rev_by_date[r["d"]] = rev_by_date.get(r["d"], 0.0) + float(r["total"] or 0)
+
     # Build per-day tuples for all days in range that have activity
     day_data = []
-    t = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0)
+    t = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0, rev=0.0)
     current = start
     while current <= end:
         sales = sales_by_date.get(current, 0.0)
@@ -569,13 +585,15 @@ def _collect_pnl_data(start, end, tz):
         exp = exp_by_date.get(current, 0.0)
         prod_sal = prod_sal_by_date.get(current, 0.0)
         draw = draw_by_date.get(current, 0.0)
-        if sales or cos or exp or prod_sal or draw:
-            day_data.append((current, sales, cos, exp, prod_sal, draw))
+        rev = rev_by_date.get(current, 0.0)
+        if sales or cos or exp or prod_sal or draw or rev:
+            day_data.append((current, sales, cos, exp, prod_sal, draw, rev))
         t["sales"] += sales
         t["cos"] += cos
         t["exp"] += exp
         t["prod_sal"] += prod_sal
         t["draw"] += draw
+        t["rev"] += rev
         current += timedelta(days=1)
 
     return day_data, t
@@ -592,14 +610,14 @@ def build_pnl_daily(date_from=None, date_to=None):
 
     headers = ["Sana", "Savdo", "Tan narxi", "Yalpi foyda", "Xarajatlar", "Op. foyda", "Harajatlar", "Sof foyda"]
     rows = []
-    for d, sales, mat_cos, exp, prod_sal, draw in day_data:
-        cos = mat_cos + prod_sal          # Tan narxi = materials + nonvoy (production) pay
+    for d, sales, mat_cos, exp, prod_sal, draw, rev in day_data:
+        cos = mat_cos + prod_sal + rev    # Tan narxi = materials + nonvoy pay + reviziya
         gp = sales - cos
         op = gp - exp
         np_v = op - draw
         rows.append([d.strftime("%Y-%m-%d"), sales, cos, gp, exp, op, draw, np_v])
 
-    cos_t = t["cos"] + t["prod_sal"]
+    cos_t = t["cos"] + t["prod_sal"] + t["rev"]
     gp_t = t["sales"] - cos_t
     op_t = gp_t - t["exp"]
     np_t = op_t - t["draw"]
@@ -634,12 +652,12 @@ def build_gross_overall(date_from=None, date_to=None):
 
     # Aggregate by ISO week — emit one summary row per week
     current_week = None
-    w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0)
+    w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0, rev=0.0)
     week_num = 0
     week_first_day = None
 
     def _flush_week(wn, first_day, last_day, w):
-        cos = w["cos"] + w["prod_sal"]          # Tan narxi = materials + nonvoy pay
+        cos = w["cos"] + w["prod_sal"] + w["rev"]   # Tan narxi = materials + nonvoy pay + reviziya
         wgp = w["sales"] - cos
         wop = wgp - w["exp"]
         wnet = wop - w["draw"]
@@ -648,7 +666,7 @@ def build_gross_overall(date_from=None, date_to=None):
                 first_day.isoformat(), last_day.isoformat()]
 
     last_day_seen = None
-    for d, sales, mat_cos, exp, prod_sal, draw in day_data:
+    for d, sales, mat_cos, exp, prod_sal, draw, rev in day_data:
         iso_week = d.isocalendar()[:2]  # (year, week_number)
 
         if current_week is None:
@@ -660,10 +678,10 @@ def build_gross_overall(date_from=None, date_to=None):
             current_week = iso_week
             week_num += 1
             week_first_day = d
-            w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0)
+            w = dict(sales=0.0, cos=0.0, exp=0.0, prod_sal=0.0, draw=0.0, rev=0.0)
 
         w["sales"] += sales; w["cos"] += mat_cos; w["exp"] += exp
-        w["prod_sal"] += prod_sal; w["draw"] += draw
+        w["prod_sal"] += prod_sal; w["draw"] += draw; w["rev"] += rev
         last_day_seen = d
 
     # Final week
@@ -671,7 +689,7 @@ def build_gross_overall(date_from=None, date_to=None):
         rows.append(_flush_week(week_num, week_first_day, last_day_seen, w))
 
     # Period total — label adapts to range span
-    cos_t = t["cos"] + t["prod_sal"]
+    cos_t = t["cos"] + t["prod_sal"] + t["rev"]
     gp_t = t["sales"] - cos_t
     op_t = gp_t - t["exp"]
     np_t = op_t - t["draw"]
@@ -955,9 +973,19 @@ class GrossDailyView(APIView):
                 amt = -amt
             prod_sal_total += amt
 
+        # Reviziya (inventory recount) variance for this day folds into Tan narxi
+        # — a non-cash adjustment (+shortage / −surplus). Same avg-cost basis as
+        # the material cost above.
+        rev_total = float(
+            InventoryRevisionReport.objects
+            .filter(item_type="ingredient", value_uzs__isnull=False, created_at__date=date)
+            .aggregate(t=Sum("value_uzs"))["t"] or 0
+        )
+
         # Tan narxi = material cost of goods PRODUCED today (meshoks × per-meshok
-        # material/communal/other cost) PLUS today's nonvoy (production) wages.
-        cos_display = production_material_total + prod_sal_total
+        # material/communal/other cost) PLUS today's nonvoy (production) wages PLUS
+        # today's reviziya variance.
+        cos_display = production_material_total + prod_sal_total + rev_total
         gp = grand_total_sales - cos_display
         op = gp - exp_total
         net = op - draw_total
@@ -975,6 +1003,7 @@ class GrossDailyView(APIView):
                 "cos": cos_display,
                 "cos_materials": production_material_total,
                 "production_salary": prod_sal_total,
+                "cos_revision": rev_total,
                 "gross_profit": gp,
                 "expenses": exp_total,
                 "draw": draw_total,
@@ -1136,8 +1165,29 @@ class PnlDetailView(APIView):
                 "amount": amt,
             })
 
-        # Tan narxi = materials + communal + other (boshqa) + production pay.
-        tan = total_cos + total_communal + total_other + total_prod_sal
+        # Reviziya (inventory recount) variance — a non-cash adjustment that folds
+        # into Tan narxi. Each row is an ingredient recount: +value = shortage
+        # (kamomad, adds to COGS), −value = surplus (ortiqcha, reduces it).
+        rev_qs = (
+            InventoryRevisionReport.objects
+            .filter(item_type="ingredient", value_uzs__isnull=False,
+                    created_at__date__gte=start, created_at__date__lte=end)
+            .exclude(value_uzs=0)
+            .select_related("ingredient").order_by("-created_at")
+        )
+        revision_items = [
+            {
+                "date": timezone.localtime(r.created_at).strftime("%Y-%m-%d"),
+                "name": r.ingredient.name if r.ingredient else "—",
+                "qty_delta": float(r.old_quantity - r.new_quantity),
+                "amount": _dec(r.value_uzs),
+            }
+            for r in rev_qs
+        ]
+        total_revision = sum(i["amount"] for i in revision_items)
+
+        # Tan narxi = materials + communal + other (boshqa) + production pay + reviziya.
+        tan = total_cos + total_communal + total_other + total_prod_sal + total_revision
         gp = total_sales - tan
         op = gp - total_exp
         net = op - total_draw
@@ -1156,6 +1206,8 @@ class PnlDetailView(APIView):
                 "other_items": other_items,
                 "salary_total": total_prod_sal,
                 "salary_items": prod_sal_items,
+                "revision_total": total_revision,
+                "revision_items": revision_items,
             },
             "expenses": {"total": total_exp, "items": exp_items},
             "draw": {"total": total_draw, "items": draw_items},

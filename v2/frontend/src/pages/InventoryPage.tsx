@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Pencil, Plus, Settings2, Trash2, Wheat } from "lucide-react";
 import { api } from "../lib/api";
@@ -868,15 +868,6 @@ function ReviziyaModal({
   const [sessionNote, setSessionNote] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  // Kassa the shortage/surplus value is booked to ("" = don't book, stock only).
-  const [accountId, setAccountId] = useState<number | "">("");
-  const { data: accounts } = useQuery<Paginated<KassaAccount>>({
-    queryKey: ["kassa", "accounts"],
-    queryFn: async () => (await api.get<Paginated<KassaAccount>>("/finance/accounts/")).data,
-  });
-  useEffect(() => {
-    if (accountId === "" && accounts?.results?.length) setAccountId(accounts.results[0].id);
-  }, [accounts, accountId]);
 
   const changedItems = ingredients.filter((i) => {
     const newVal = parseFloat(quantities[i.id] ?? "");
@@ -899,7 +890,6 @@ function ReviziyaModal({
       await api.post("/inventory/revisions/batch/", {
         items,
         note: sessionNote,
-        account_id: accountId === "" ? null : accountId,
       });
       onClose();
     } catch (e: unknown) {
@@ -996,21 +986,10 @@ function ReviziyaModal({
           />
         </Field>
 
-        <Field label="Kassa (kamomad chiqim, ortiqcha kirim yoziladi)">
-          <select
-            value={accountId}
-            onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}
-            className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
-          >
-            <option value="">— Yozilmasin (faqat ombor)</option>
-            {accounts?.results.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-          <p className="text-xs text-muted-foreground mt-1">
-            Kamomad → Xarajat (chiqim), ortiqcha → kirim. Tan narxi/hisobotlarga ta'sir qiladi.
-          </p>
-        </Field>
+        <div className="rounded-lg bg-muted/50 border px-3 py-2 text-xs text-muted-foreground">
+          Farq <span className="font-medium text-foreground">tan narxiga (COGS)</span> qo'shiladi:
+          kamomad tan narxni oshiradi, ortiqcha kamaytiradi. Kassaga ta'sir qilmaydi.
+        </div>
 
         {error && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">

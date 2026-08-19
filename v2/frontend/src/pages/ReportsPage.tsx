@@ -1332,6 +1332,18 @@ function CosDetail({ cos }: { cos: any }) {
           empty="Ishlab chiqarish ish haqi yo'q"
         />
       </div>
+      {(cos.revision_items?.length ?? 0) > 0 && (
+        <DetailTable
+          title={`Reviziya (ombor farqi) — ${fm(cos.revision_total ?? 0)}`}
+          head={["Ingredient", "Sana", "Farq", "Summa"]}
+          rows={(cos.revision_items ?? []).map((i: any) => {
+            const d = -i.qty_delta; // stock change (new − old): negative = kamomad
+            return [i.name, fmtDMY(i.date), `${d > 0 ? "+" : ""}${d.toLocaleString()}`, <Money v={i.amount} />];
+          })}
+          foot={["Jami", "", "", <Money v={cos.revision_total ?? 0} />]}
+          empty="Reviziya farqi yo'q"
+        />
+      )}
     </div>
   );
 }
