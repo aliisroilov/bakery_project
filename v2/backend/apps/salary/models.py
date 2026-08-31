@@ -91,6 +91,15 @@ class SalaryPayment(TimestampedModel):
     amount = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES
     )
+    # UZS per 1 USD at payout time. Only meaningful when currency == USD: nonvoy
+    # wages fold into Tan narxi in the UZS P&L, so a dollar payout is restated at
+    # this rate. 0 = row recorded before the field existed → DEFAULT_USD_RATE.
+    exchange_rate = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=0,
+        help_text="1 USD = ? UZS. Faqat USD to'lov uchun.",
+    )
     account = models.ForeignKey(
         "finance.KassaAccount",
         on_delete=models.PROTECT,

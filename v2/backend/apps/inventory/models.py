@@ -73,6 +73,15 @@ class Purchase(TimestampedModel):
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
         help_text="total_price / quantity — cached for cost calculations",
     )
+    # UZS per 1 USD at purchase time. Only meaningful when currency == USD: the
+    # kassa is debited in dollars, but the Xarajatlar report totals in UZS, so the
+    # purchase is restated at this rate. 0 = pre-field row → DEFAULT_USD_RATE.
+    exchange_rate = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=0,
+        help_text="1 USD = ? UZS. Faqat USD xarid uchun.",
+    )
     account = models.ForeignKey(
         "finance.KassaAccount", on_delete=models.PROTECT, related_name="ingredient_purchases"
     )

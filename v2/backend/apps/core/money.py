@@ -53,3 +53,59 @@ class Money:
         if currency == Currency.USD:
             return cls.usd_only(amount)
         raise ValueError(f"Unknown currency: {currency}")
+
+
+# ────────────────── USD → UZS conversion (reporting) ──────────────────
+# Kassa balances stay per-currency and are NEVER summed. Reports are a different
+# beast: the P&L waterfall is a single UZS statement, so a dollar expense has to
+# be restated in UZS or it silently vanishes from Xarajatlar / Tan narxi / foyda.
+# Every USD-capable expense row therefore carries the rate it was booked at
+# (`exchange_rate`, UZS per 1 USD), mirroring Payment.exchange_rate.
+
+
+def effective_rate(rate) -> Decimal:
+    """UZS per 1 USD for a row, falling back to the standard rate.
+
+    0 / None = legacy row recorded before the field existed — those are restated
+    at DEFAULT_USD_RATE rather than dropped.
+    """
+    from .constants import DEFAULT_USD_RATE
+
+    value = Decimal(str(rate)) if rate is not None else ZERO
+    return value if value > 0 else Decimal(DEFAULT_USD_RATE)
+
+
+def to_uzs(amount, currency: str, rate=None) -> Decimal:
+    """Restate a (currency, amount) pair in UZS. UZS amounts pass through."""
+    value = Decimal(str(amount)) if amount is not None else ZERO
+    if currency != Currency.USD:
+        return quantize_money(value)
+    return quantize_money(value * effective_rate(rate))
+
+
+def uzs_amount_expr(
+    amount_field: str = "amount",
+    rate_field: str = "exchange_rate",
+    currency_field: str = "currency",
+):
+    """ORM expression form of `to_uzs` — for aggregating mixed-currency rows.
+
+    Usage: qs.annotate(uzs=uzs_amount_expr()).aggregate(Sum("uzs"))
+    """
+    from django.db.models import Case, DecimalField, F, Value, When
+
+    from .constants import DEFAULT_USD_RATE, MONEY_DECIMAL_PLACES
+
+    output = DecimalField(max_digits=24, decimal_places=MONEY_DECIMAL_PLACES)
+    return Case(
+        When(
+            **{currency_field: Currency.USD, f"{rate_field}__gt": 0},
+            then=F(amount_field) * F(rate_field),
+        ),
+        When(
+            **{currency_field: Currency.USD},
+            then=F(amount_field) * Value(Decimal(DEFAULT_USD_RATE)),
+        ),
+        default=F(amount_field),
+        output_field=output,
+    )

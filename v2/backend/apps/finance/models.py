@@ -257,6 +257,16 @@ class GeneralExpense(TimestampedModel):
     amount = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES
     )
+    # UZS per 1 USD at the moment the money left the kassa. Only meaningful when
+    # currency == USD: the kassa is debited in dollars, but Hisobotlar is a single
+    # UZS statement, so the expense is restated at this rate for the P&L. 0 = row
+    # recorded before the field existed → reports fall back to DEFAULT_USD_RATE.
+    exchange_rate = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=0,
+        help_text="1 USD = ? UZS. Faqat USD xarajat uchun.",
+    )
     account = models.ForeignKey(
         KassaAccount, on_delete=models.PROTECT, related_name="general_expenses"
     )

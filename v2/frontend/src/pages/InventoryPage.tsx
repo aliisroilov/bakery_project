@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Archive, ArchiveRestore, ClipboardList, History, Pencil, Plus, Settings2, Trash2, Wheat } from "lucide-react";
 import { api } from "../lib/api";
 import type { KassaAccount, Paginated } from "../lib/types";
-import { formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { DEFAULT_USD_RATE, formatMoney, fmtDate, fmtDateTime, nowTashkentStr, tashkentToISO } from "../lib/utils";
 import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 
 export interface Ingredient {
@@ -26,6 +26,7 @@ interface Purchase {
   currency: "UZS" | "USD";
   total_price: string;
   unit_price: string;
+  exchange_rate: string;
   account: number;
   account_name: string;
   occurred_at: string;
@@ -598,6 +599,13 @@ export function PurchaseModal({
   const [currency, setCurrency] = useState<"UZS" | "USD">(existing?.currency ?? "UZS");
   const [quantity, setQuantity] = useState(existing ? String(parseFloat(existing.quantity)) : "");
   const [unitPrice, setUnitPrice] = useState(existing ? String(parseFloat(existing.unit_price)) : "");
+  // Kurs (UZS per 1 USD) — a dollar purchase is paid from the kassa in dollars
+  // but reported in so'm, so the rate it was bought at travels with the row.
+  const [rate, setRate] = useState(
+    existing && existing.currency === "USD" && parseFloat(existing.exchange_rate) > 0
+      ? String(parseFloat(existing.exchange_rate))
+      : String(DEFAULT_USD_RATE),
+  );
   const [occurredAt, setOccurredAt] = useState(
     existing ? existing.occurred_at.slice(0, 10) : nowTashkentStr().slice(0, 10),
   );
@@ -605,6 +613,8 @@ export function PurchaseModal({
 
   const qtyNum = parseFloat(quantity) || 0;
   const unitNum = parseFloat(unitPrice) || 0;
+  const isUsd = currency === "USD";
+  const rateNum = parseFloat(rate) || 0;
   // Compute unconditionally so a 0-qty purchase still sends total_price (0.00) —
   // lets you register an ingredient in inventory without buying stock yet.
   const totalPrice = (qtyNum * unitNum).toFixed(2);
@@ -626,6 +636,7 @@ export function PurchaseModal({
         currency,
         quantity,
         total_price: totalPrice,
+        exchange_rate: isUsd ? rate : "0",
         occurred_at: tashkentToISO(occurredAt + "T00:00"),
         note,
       };
@@ -643,7 +654,8 @@ export function PurchaseModal({
 
   // Quantity may be 0 (register an ingredient without stock); only require a
   // chosen ingredient + kassa, and non-negative numbers.
-  const canSave = !!(ingredientId && accountId) && qtyNum >= 0 && unitNum >= 0;
+  const canSave =
+    !!(ingredientId && accountId) && qtyNum >= 0 && unitNum >= 0 && (!isUsd || rateNum > 0);
   useModalHotkeys({
     onClose,
     onSaveExit: () => { if (canSave && !create.isPending) create.mutate(); },
@@ -723,12 +735,33 @@ export function PurchaseModal({
               />
             </Field>
           </div>
+          {isUsd && (
+            <Field label="Kurs (1 USD = ? UZS)">
+              <input
+                className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                inputMode="decimal"
+                placeholder={String(DEFAULT_USD_RATE)}
+              />
+            </Field>
+          )}
           {qtyNum > 0 && unitNum > 0 && (
-            <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground flex justify-between">
-              <span>Umumiy summa ({currency}):</span>
-              <span className="font-semibold text-foreground tabular-nums">
-                {Number(totalPrice).toLocaleString()}
-              </span>
+            <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground space-y-1">
+              <div className="flex justify-between">
+                <span>Umumiy summa ({currency}):</span>
+                <span className="font-semibold text-foreground tabular-nums">
+                  {Number(totalPrice).toLocaleString()}
+                </span>
+              </div>
+              {isUsd && rateNum > 0 && (
+                <div className="flex justify-between">
+                  <span>Hisobotlarda (UZS):</span>
+                  <span className="font-semibold text-foreground tabular-nums">
+                    {formatMoney(String(Math.round(Number(totalPrice) * rateNum)), "UZS")}
+                  </span>
+                </div>
+              )}
             </div>
           )}
           <Field label="Sana">

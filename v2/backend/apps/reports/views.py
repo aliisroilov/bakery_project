@@ -22,6 +22,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.money import to_uzs, uzs_amount_expr
 from apps.finance.models import GeneralExpense, KassaAccount, Payment
 from apps.inventory.models import Ingredient, Purchase
 from apps.orders.models import Order, OrderItem
@@ -52,6 +53,24 @@ def _dec(v) -> float:
     return float(v) if v is not None else 0.0
 
 
+def _uzs(amount, currency, rate=None) -> float:
+    """Row amount restated in UZS — USD rows converted at their booked rate.
+
+    Hisobotlar is a single-currency (UZS) statement: leaving USD rows out of the
+    sums, as the reports used to, silently understated every expense line.
+    """
+    return float(to_uzs(amount, currency, rate))
+
+
+def _rate_cell(currency, rate):
+    """Kurs column value — blank for UZS rows, the applied rate for USD rows."""
+    if currency != "USD":
+        return ""
+    from apps.core.money import effective_rate
+
+    return float(effective_rate(rate))
+
+
 # ────────────────── dataset builders (shared by xlsx + JSON) ──────────────────
 def build_payments(date_from=None, date_to=None):
     qs = Payment.objects.select_related("shop", "account", "collected_by").order_by("-received_at")
@@ -62,16 +81,20 @@ def build_payments(date_from=None, date_to=None):
 
     headers = [
         "Sana", "Do'kon", "Tur", "Valyuta", "Summa", "Skidka",
+        "Kurs", "UZS ekvivalent",
         "Kassa", "Qabul qiluvchi", "Buyurtma kuni", "Izoh",
     ]
     rows = []
     total_uzs = total_usd = 0.0
+    total_eq = 0.0
     for p in qs:
         amount = _dec(p.amount)
         if p.currency == "UZS":
             total_uzs += amount
         else:
             total_usd += amount
+        eq = _uzs(p.amount, p.currency, p.exchange_rate)
+        total_eq += eq
         rows.append([
             timezone.localtime(p.received_at).strftime("%Y-%m-%d %H:%M"),
             p.shop.name,
@@ -79,12 +102,17 @@ def build_payments(date_from=None, date_to=None):
             p.currency,
             amount,
             _dec(p.discount),
+            _rate_cell(p.currency, p.exchange_rate),
+            eq,
             p.account.name,
             p.collected_by.display_name if p.collected_by_id else "",
             p.order_date.strftime("%Y-%m-%d") if p.order_date else "",
             p.note or "",
         ])
-    summary = {"total_uzs": total_uzs, "total_usd": total_usd, "count": len(rows)}
+    summary = {
+        "total_uzs": total_uzs, "total_usd": total_usd,
+        "total_uzs_equivalent": total_eq, "count": len(rows),
+    }
     return headers, rows, summary
 
 
@@ -126,21 +154,32 @@ def build_expenses(date_from=None, date_to=None):
         purchases = purchases.filter(occurred_at__date__lte=date_to)
         expenses = expenses.filter(occurred_at__date__lte=date_to)
 
-    headers = ["Sana", "Tur", "Nomi", "Valyuta", "Miqdor", "Kassa", "Izoh"]
+    # "UZS ekvivalent" restates USD rows at the rate they were booked at, so the
+    # footer totals one comparable number instead of two currencies that can't
+    # be added. UZS rows pass through unchanged.
+    headers = [
+        "Sana", "Tur", "Nomi", "Valyuta", "Miqdor",
+        "Kurs", "UZS ekvivalent", "Kassa", "Izoh",
+    ]
     rows = []
     total_uzs = total_usd = 0.0
+    total_eq = 0.0
     for p in purchases:
         amt = _dec(p.total_price)
         if p.currency == "UZS":
             total_uzs += amt
         else:
             total_usd += amt
+        eq = _uzs(p.total_price, p.currency, p.exchange_rate)
+        total_eq += eq
         rows.append([
             timezone.localtime(p.occurred_at).strftime("%Y-%m-%d"),
             "Xomashyo",
             p.ingredient.name,
             p.currency,
             amt,
+            _rate_cell(p.currency, p.exchange_rate),
+            eq,
             p.account.name,
             p.note or "",
         ])
@@ -150,17 +189,24 @@ def build_expenses(date_from=None, date_to=None):
             total_uzs += amt
         else:
             total_usd += amt
+        eq = _uzs(e.amount, e.currency, e.exchange_rate)
+        total_eq += eq
         rows.append([
             timezone.localtime(e.occurred_at).strftime("%Y-%m-%d"),
             e.category.name if e.category_id else "Umumiy xarajat",
             e.title,
             e.currency,
             amt,
+            _rate_cell(e.currency, e.exchange_rate),
+            eq,
             e.account.name,
             e.note or "",
         ])
     rows.sort(key=lambda r: r[0], reverse=True)
-    return headers, rows, {"total_uzs": total_uzs, "total_usd": total_usd, "count": len(rows)}
+    return headers, rows, {
+        "total_uzs": total_uzs, "total_usd": total_usd,
+        "total_uzs_equivalent": total_eq, "count": len(rows),
+    }
 
 
 def build_salary(date_from=None, date_to=None):
@@ -170,15 +216,21 @@ def build_salary(date_from=None, date_to=None):
     if date_to:
         qs = qs.filter(occurred_at__date__lte=date_to)
 
-    headers = ["Sana", "Xodim", "Tur", "Valyuta", "Miqdor", "Kassa", "Davr", "Izoh"]
+    headers = [
+        "Sana", "Xodim", "Tur", "Valyuta", "Miqdor",
+        "Kurs", "UZS ekvivalent", "Kassa", "Davr", "Izoh",
+    ]
     rows = []
     total_uzs = total_usd = 0.0
+    total_eq = 0.0
     for p in qs:
         amt = _dec(p.amount)
         if p.currency == "UZS":
             total_uzs += amt
         else:
             total_usd += amt
+        eq = _uzs(p.amount, p.currency, p.exchange_rate)
+        total_eq += eq
         period = ""
         if p.period_start and p.period_end:
             period = f"{p.period_start} → {p.period_end}"
@@ -188,11 +240,16 @@ def build_salary(date_from=None, date_to=None):
             p.get_kind_display(),
             p.currency,
             amt,
+            _rate_cell(p.currency, p.exchange_rate),
+            eq,
             p.account.name,
             period,
             p.note or "",
         ])
-    return headers, rows, {"total_uzs": total_uzs, "total_usd": total_usd, "count": len(rows)}
+    return headers, rows, {
+        "total_uzs": total_uzs, "total_usd": total_usd,
+        "total_uzs_equivalent": total_eq, "count": len(rows),
+    }
 
 
 def build_shop_debts():
@@ -522,13 +579,15 @@ def _collect_pnl_data(start, end, tz):
 
     # Expenses — categories flagged include_in_pnl=False are left out of the P&L.
     # The rest split into operating (Xarajatlar) vs owner draws (Harajatlar).
+    # BOTH currencies count: a USD expense is restated in UZS at the rate it was
+    # booked at (uzs_amount_expr), never dropped.
     exp_qs = (
         GeneralExpense.objects
-        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
         .exclude(category__include_in_pnl=False)
         .annotate(d=TruncDate("occurred_at", tzinfo=tz))
         .values("d", "category__below_op_profit")
-        .annotate(total=Sum("amount"))
+        .annotate(total=Sum(uzs_amount_expr()))
     )
     exp_by_date: dict = {}
     draw_by_date: dict = {}
@@ -545,12 +604,12 @@ def _collect_pnl_data(start, end, tz):
         SalaryPayment.objects
         .filter(
             occurred_at__date__gte=start, occurred_at__date__lte=end,
-            currency="UZS", user__role="nonvoy",
+            user__role="nonvoy",
         )
         .exclude(kind="advance")
         .annotate(d=TruncDate("occurred_at", tzinfo=tz))
         .values("d", "kind")
-        .annotate(total=Sum("amount"))
+        .annotate(total=Sum(uzs_amount_expr()))
     )
     prod_sal_by_date: dict = {}   # nonvoy → Tan narxi (cost of goods)
     for r in sal_rows:
@@ -948,10 +1007,10 @@ class GrossDailyView(APIView):
         draw_total = 0.0
         for r in (
             GeneralExpense.objects
-            .filter(occurred_at__date=date, currency="UZS")
+            .filter(occurred_at__date=date)
             .exclude(category__include_in_pnl=False)
             .values("category__below_op_profit")
-            .annotate(t=Sum("amount"))
+            .annotate(t=Sum(uzs_amount_expr()))
         ):
             if r["category__below_op_profit"]:
                 draw_total += float(r["t"] or 0)
@@ -963,10 +1022,10 @@ class GrossDailyView(APIView):
         prod_sal_total = 0.0
         for r in (
             SalaryPayment.objects
-            .filter(occurred_at__date=date, currency="UZS", user__role="nonvoy")
+            .filter(occurred_at__date=date, user__role="nonvoy")
             .exclude(kind="advance")
             .values("kind")
-            .annotate(t=Sum("amount"))
+            .annotate(t=Sum(uzs_amount_expr()))
         ):
             amt = float(r["t"] or 0)
             if r["kind"] == "deduction":
@@ -1121,17 +1180,23 @@ class PnlDetailView(APIView):
         # (Harajatlar, below it) exactly like _collect_pnl_data.
         exp_qs = (
             GeneralExpense.objects
-            .filter(occurred_at__date__gte=start, occurred_at__date__lte=end, currency="UZS")
+            .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
             .exclude(category__include_in_pnl=False)
             .select_related("category").order_by("-occurred_at")
         )
         exp_items, draw_items = [], []
         for e in exp_qs:
+            # `amount` is always UZS so the modal foots to the table; USD rows
+            # additionally carry what was actually paid, for the "$100 × 12 000"
+            # hint next to the converted figure.
             row = {
                 "date": timezone.localtime(e.occurred_at).strftime("%Y-%m-%d"),
                 "title": e.title,
                 "category": e.category.name if e.category_id else "—",
-                "amount": _dec(e.amount),
+                "amount": _uzs(e.amount, e.currency, e.exchange_rate),
+                "currency": e.currency,
+                "original_amount": _dec(e.amount),
+                "exchange_rate": _rate_cell(e.currency, e.exchange_rate),
             }
             if e.category_id and e.category.below_op_profit:
                 draw_items.append(row)
@@ -1147,22 +1212,27 @@ class PnlDetailView(APIView):
             SalaryPayment.objects
             .filter(
                 occurred_at__date__gte=start, occurred_at__date__lte=end,
-                currency="UZS", user__role="nonvoy",
+                user__role="nonvoy",
             )
             .exclude(kind="advance").select_related("user").order_by("-occurred_at")
         )
         prod_sal_items = []
         total_prod_sal = 0.0
         for s in sal_qs:
-            amt = _dec(s.amount)
+            amt = _uzs(s.amount, s.currency, s.exchange_rate)
+            original = _dec(s.amount)
             if s.kind == "deduction":
                 amt = -amt
+                original = -original
             total_prod_sal += amt
             prod_sal_items.append({
                 "date": timezone.localtime(s.occurred_at).strftime("%Y-%m-%d"),
                 "user": s.user.display_name,
                 "kind": s.get_kind_display(),
                 "amount": amt,
+                "currency": s.currency,
+                "original_amount": original,
+                "exchange_rate": _rate_cell(s.currency, s.exchange_rate),
             })
 
         # Reviziya (inventory recount) variance — a non-cash adjustment that folds

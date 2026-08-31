@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from apps.core.serializers import UsdRateMixin
+
 from .models import Ingredient, ProductRecipe, Purchase, Unit
 from apps.production.models import InventoryRevisionReport
 
@@ -27,7 +29,7 @@ class IngredientSerializer(serializers.ModelSerializer):
         read_only_fields = ["avg_cost_uzs", "is_low_stock", "created_at"]
 
 
-class PurchaseSerializer(serializers.ModelSerializer):
+class PurchaseSerializer(UsdRateMixin, serializers.ModelSerializer):
     ingredient_name = serializers.CharField(source="ingredient.name", read_only=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
 
@@ -35,7 +37,7 @@ class PurchaseSerializer(serializers.ModelSerializer):
         model = Purchase
         fields = [
             "id", "ingredient", "ingredient_name",
-            "quantity", "currency", "total_price", "unit_price",
+            "quantity", "currency", "total_price", "unit_price", "exchange_rate",
             "account", "account_name",
             "occurred_at", "note",
             "created_by", "created_at",

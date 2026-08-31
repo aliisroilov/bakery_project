@@ -1,9 +1,7 @@
-from decimal import Decimal
-
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.core.constants import DEFAULT_USD_RATE, Currency
+from apps.core.serializers import UsdRateMixin
 
 from .models import (
     CashHandover,
@@ -53,7 +51,7 @@ class KassaTransactionSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
 
 
-class PaymentSerializer(serializers.ModelSerializer):
+class PaymentSerializer(UsdRateMixin, serializers.ModelSerializer):
     shop_name = serializers.CharField(source="shop.name", read_only=True)
     account_name = serializers.CharField(source="account.name", read_only=True)
     collected_by_name = serializers.CharField(
@@ -74,24 +72,9 @@ class PaymentSerializer(serializers.ModelSerializer):
             "collected_by", "collected_by_name",
             "received_at", "note", "created_at",
         ]
-        read_only_fields = ["created_at"]
-
-    def validate(self, data):
         # Shops are invoiced in UZS, so a USD kirim needs a rate to settle their
-        # debt. Fall back to the standard rate when the client didn't send one,
-        # and never let a USD payment through with a zero/negative rate.
-        currency = data.get(
-            "currency", getattr(self.instance, "currency", Currency.UZS)
-        )
-        if currency == Currency.USD:
-            rate = data.get(
-                "exchange_rate", getattr(self.instance, "exchange_rate", None)
-            )
-            if not rate or rate <= 0:
-                data["exchange_rate"] = Decimal(DEFAULT_USD_RATE)
-        else:
-            data["exchange_rate"] = Decimal(0)
-        return data
+        # debt — UsdRateMixin fills in the standard rate when none was sent.
+        read_only_fields = ["created_at"]
 
 
 class ExpenseCategorySerializer(serializers.ModelSerializer):
@@ -104,7 +87,7 @@ class ExpenseCategorySerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
 
 
-class GeneralExpenseSerializer(serializers.ModelSerializer):
+class GeneralExpenseSerializer(UsdRateMixin, serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True, default="")
     account_name = serializers.CharField(source="account.name", read_only=True)
 
@@ -112,7 +95,7 @@ class GeneralExpenseSerializer(serializers.ModelSerializer):
         model = GeneralExpense
         fields = [
             "id", "category", "category_name", "title",
-            "currency", "amount",
+            "currency", "amount", "exchange_rate",
             "account", "account_name",
             "occurred_at", "note", "created_by", "created_at",
         ]

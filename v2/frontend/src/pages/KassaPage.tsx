@@ -1465,8 +1465,15 @@ function ChiqimModal({
   const [accountId, setAccountId] = useState<number | "">(accounts[0]?.id ?? "");
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
   const [amount, setAmount] = useState("");
+  // Kurs (UZS per 1 USD) — the kassa is debited in dollars, but Hisobotlar is a
+  // UZS statement, so a dollar expense is restated at this rate for the P&L.
+  const [rate, setRate] = useState(String(DEFAULT_USD_RATE));
   const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr().slice(0, 10));
   const [note, setNote] = useState("");
+
+  const isUsd = currency === "USD";
+  const rateNum = parseFloat(rate) || 0;
+  const amountNum = parseFloat(amount) || 0;
 
   const { data: categories } = useQuery<Paginated<ExpenseCategory>>({
     queryKey: ["finance", "expense-categories"],
@@ -1483,6 +1490,7 @@ function ChiqimModal({
         account: accountId,
         currency,
         amount,
+        exchange_rate: isUsd ? rate : "0",
         occurred_at: tashkentToISO(occurredAt + "T00:00"),
         note,
       }),
@@ -1494,7 +1502,7 @@ function ChiqimModal({
     },
   });
 
-  const canSave = !!accountId && parseFloat(amount) > 0;
+  const canSave = !!accountId && amountNum > 0 && (!isUsd || rateNum > 0);
   const saveExit = () => { keepOpen.current = false; if (canSave) create.mutate(); };
   const saveNew = () => { keepOpen.current = true; if (canSave) create.mutate(); };
   useModalHotkeys({ onClose, onSaveExit: saveExit, onSaveNew: saveNew, canSave });
@@ -1581,6 +1589,39 @@ function ChiqimModal({
               placeholder="0"
             />
           </Field>
+          {isUsd && (
+            <>
+              <Field label="Kurs (1 USD = ? UZS)">
+                <input
+                  className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                  inputMode="decimal"
+                  placeholder={String(DEFAULT_USD_RATE)}
+                />
+              </Field>
+              <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+                {amountNum > 0 && rateNum > 0 ? (
+                  <>
+                    <div className="tabular-nums">
+                      {formatMoney(String(amountNum), "USD")} × {rateNum.toLocaleString("ru-RU")} ={" "}
+                      <span className="font-semibold">
+                        {formatMoney(String(Math.round(amountNum * rateNum)), "UZS")}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      Hisobotlarda xarajat shu so'm summasi bilan hisoblanadi.
+                      Kassadan esa dollar yechiladi.
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground">
+                    Kursni kiriting — xarajat hisobotlarga so'mda tushadi.
+                  </div>
+                )}
+              </div>
+            </>
+          )}
           <Field label="Sana">
             <input
               type="date"
@@ -2363,6 +2404,9 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
   const [kind, setKind] = useState("salary");
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
   const [amount, setAmount] = useState("");
+  // Kurs (UZS per 1 USD) — nonvoy pay folds into Tan narxi in the UZS P&L, so a
+  // dollar payout carries the rate it was made at.
+  const [rate, setRate] = useState(String(DEFAULT_USD_RATE));
   const [accountId, setAccountId] = useState<number | "">(accounts[0]?.id ?? "");
   const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr());
   const [periodStart, setPeriodStart] = useState("");
@@ -2382,6 +2426,7 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
         kind,
         currency,
         amount,
+        exchange_rate: currency === "USD" ? rate : "0",
         account: accountId,
         occurred_at: tashkentToISO(occurredAt),
         period_start: periodStart || null,
@@ -2400,7 +2445,9 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
     },
   });
 
-  const canSave = !!userId && !!accountId && parseFloat(amount) > 0 && !create.isPending;
+  const canSave =
+    !!userId && !!accountId && parseFloat(amount) > 0 && !create.isPending &&
+    (currency !== "USD" || parseFloat(rate) > 0);
   const saveExit = () => { keepOpen.current = false; if (canSave) create.mutate(); };
   const saveNew = () => { keepOpen.current = true; if (canSave) create.mutate(); };
   useModalHotkeys({ onClose, onSaveExit: saveExit, onSaveNew: saveNew, canSave });
@@ -2455,6 +2502,12 @@ function KassaSalaryModal({ accounts, onClose }: { accounts: KassaAccount[]; onC
               </select>
             </Field>
           </div>
+          {currency === "USD" && (
+            <Field label="Kurs (1 USD = ? UZS)">
+              <input className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums" value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" placeholder={String(DEFAULT_USD_RATE)} />
+              <p className="text-xs text-muted-foreground mt-1">Hisobotlarda to'lov shu kurs bo'yicha so'mga o'giriladi.</p>
+            </Field>
+          )}
           <Field label="To'lov vaqti">
             <input type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} className="w-full h-10 rounded-lg border bg-background px-3 text-sm" />
           </Field>

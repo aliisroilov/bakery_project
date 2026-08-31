@@ -33,8 +33,9 @@ interface ReportDef {
   supportsDateRange: boolean;
   moneyCols?: number[];
   currencyCol?: number;
-  // Fixed per-column currency for reports WITHOUT a per-row currencyCol
-  // (e.g. shop_debts has separate UZS and USD columns).
+  // Fixed per-column currency. Takes precedence over currencyCol, so a report
+  // can mix per-row currency columns (Miqdor) with always-UZS ones
+  // (UZS ekvivalent), and shop_debts can pin its separate UZS/USD columns.
   colCurrency?: Record<number, "UZS" | "USD">;
   // Money columns that must NOT be summed in the footer (e.g. loan limits).
   noTotalCols?: number[];
@@ -49,8 +50,11 @@ const REPORTS: ReportDef[] = [
     description: "Har kun uchun jami kirim — kassalar va xodimlar bo'yicha.",
     xlsxEndpoint: "/reports/payments.xlsx",
     supportsDateRange: true,
-    moneyCols: [4, 5],
+    moneyCols: [4, 5, 6, 7],
     currencyCol: 3,
+    // Kurs + UZS ekvivalent are always UZS, whatever the row's own currency is.
+    colCurrency: { 6: "UZS", 7: "UZS" },
+    noTotalCols: [6], // Kurs is a rate — summing it is meaningless
   },
   {
     type: "orders",
@@ -67,8 +71,11 @@ const REPORTS: ReportDef[] = [
     description: "Xomashyo xaridlari + umumiy xarajatlar birgalikda.",
     xlsxEndpoint: "/reports/expenses.xlsx",
     supportsDateRange: true,
-    moneyCols: [4],
+    moneyCols: [4, 5, 6],
     currencyCol: 3,
+    // Kurs + UZS ekvivalent are always UZS, whatever the row's own currency is.
+    colCurrency: { 5: "UZS", 6: "UZS" },
+    noTotalCols: [5], // Kurs is a rate — summing it is meaningless
   },
   {
     type: "salary",
@@ -76,8 +83,11 @@ const REPORTS: ReportDef[] = [
     description: "Oylik, avans, bonuslar xodim bo'yicha.",
     xlsxEndpoint: "/reports/salary.xlsx",
     supportsDateRange: true,
-    moneyCols: [4],
+    moneyCols: [4, 5, 6],
     currencyCol: 3,
+    // Kurs + UZS ekvivalent are always UZS, whatever the row's own currency is.
+    colCurrency: { 5: "UZS", 6: "UZS" },
+    noTotalCols: [5], // Kurs is a rate — summing it is meaningless
   },
   {
     type: "shop_debts",
@@ -1063,6 +1073,14 @@ function SummaryCards({ data, type }: { data: ReportData | undefined; type: Repo
     }
     if (s.total_usd !== undefined && s.total_usd > 0) {
       cards.push({ label: "Jami (USD)", value: formatMoney(String(s.total_usd), "USD") });
+      // UZS + USD can't be added, but the UZS-equivalent can: dollar rows
+      // restated at the rate they were booked at. This is the figure the P&L uses.
+      if (s.total_uzs_equivalent !== undefined) {
+        cards.push({
+          label: "Jami (UZS ekvivalent)",
+          value: formatMoney(String(s.total_uzs_equivalent), "UZS"),
+        });
+      }
     }
     if (type === "orders") {
       cards.push({ label: "Yetkazilgan (UZS)", value: formatMoney(String(s.total_delivered_uzs ?? 0), "UZS") });
@@ -1120,6 +1138,20 @@ function Money({ v }: { v: number }) {
   return (
     <span className={"tabular-nums " + (v < 0 ? "text-red-600 dark:text-red-400" : "")}>
       {formatMoney(String(Math.round(v)), "UZS")}
+    </span>
+  );
+}
+
+// A P&L line item's amount. Every figure in the modal is UZS so it foots to the
+// table; a USD row additionally shows what was really paid and at which rate.
+function ItemAmount({ i }: { i: any }) {
+  if (i?.currency !== "USD") return <Money v={i.amount} />;
+  return (
+    <span className="inline-flex flex-col items-end">
+      <Money v={i.amount} />
+      <span className="text-[11px] text-muted-foreground tabular-nums">
+        {formatMoney(String(i.original_amount), "USD")} × {Number(i.exchange_rate).toLocaleString("uz-UZ")}
+      </span>
     </span>
   );
 }
@@ -1259,7 +1291,7 @@ function MetricDetail({ k, data }: { k: string; data: any }) {
         cols={[
           { render: (i: any) => fmtDMY(i.date) },
           { render: (i: any) => i.title },
-          { render: (i: any) => <Money v={i.amount} />, align: "right" },
+          { render: (i: any) => <ItemAmount i={i} />, align: "right" },
         ]}
         empty="Xarajat yo'q"
       />
@@ -1274,7 +1306,7 @@ function MetricDetail({ k, data }: { k: string; data: any }) {
         cols={[
           { render: (i: any) => fmtDMY(i.date) },
           { render: (i: any) => i.title },
-          { render: (i: any) => <Money v={i.amount} />, align: "right" },
+          { render: (i: any) => <ItemAmount i={i} />, align: "right" },
         ]}
         empty="Harajat yo'q"
       />
@@ -1327,7 +1359,7 @@ function CosDetail({ cos }: { cos: any }) {
           cols={[
             { render: (i: any) => fmtDMY(i.date) },
             { render: (i: any) => i.kind },
-            { render: (i: any) => <Money v={i.amount} />, align: "right" },
+            { render: (i: any) => <ItemAmount i={i} />, align: "right" },
           ]}
           empty="Ishlab chiqarish ish haqi yo'q"
         />
@@ -1540,9 +1572,8 @@ export function ReportsPage() {
       const acc = { UZS: 0, USD: 0 };
       for (const r of filteredRows) {
         const cur = (
-          report.currencyCol != null
-            ? String(r[report.currencyCol])
-            : report.colCurrency?.[col] ?? "UZS"
+          report.colCurrency?.[col] ??
+          (report.currencyCol != null ? String(r[report.currencyCol]) : "UZS")
         ) as "UZS" | "USD";
         const v = Number(r[col]) || 0;
         if (cur === "USD") acc.USD += v;
@@ -1836,9 +1867,10 @@ export function ReportsPage() {
                         </td>
                         {visibleCells.map((cell, ci) => {
                           const isMoney = report.moneyCols?.includes(ci);
-                          const currency = report.currencyCol != null
-                            ? (row[report.currencyCol] as string)
-                            : (report.colCurrency?.[ci] ?? "UZS");
+                          const currency = report.colCurrency?.[ci]
+                            ?? (report.currencyCol != null
+                              ? (row[report.currencyCol] as string)
+                              : "UZS");
                           const sticky = pinFirst && ci === 0 ? "sticky left-10 z-[5] bg-inherit" : "";
                           const numVal = Number(cell);
                           const isNeg = isMoney && numVal < 0;

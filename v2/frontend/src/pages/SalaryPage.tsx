@@ -19,7 +19,7 @@ import {
 import { api } from "../lib/api";
 import { C, TICK, mkTooltip } from "../lib/chart";
 import type { KassaAccount, Paginated } from "../lib/types";
-import { formatMoney, fmtDate, fmtDMY, nowTashkentStr, tashkentToISO } from "../lib/utils";
+import { DEFAULT_USD_RATE, formatMoney, fmtDate, fmtDMY, nowTashkentStr, tashkentToISO } from "../lib/utils";
 import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 
 /** "dd-mm-yyyy – dd-mm-yyyy" for a salary payment's covered period, or null. */
@@ -645,6 +645,9 @@ function PaymentModal({
   // (We deliberately do NOT prefill the full outstanding balance — it can now be
   // very large, e.g. carried debt of 100M+, and a stray Enter would post it.)
   const [amount, setAmount] = useState("");
+  // Kurs (UZS per 1 USD) — nonvoy pay folds into Tan narxi in the UZS P&L, so a
+  // dollar payout carries the rate it was made at.
+  const [rate, setRate] = useState(String(DEFAULT_USD_RATE));
   const [accountId, setAccountId] = useState<number | "">("");
   const [occurredAt, setOccurredAt] = useState(() => nowTashkentStr());
   const [periodStart, setPeriodStart] = useState("");
@@ -671,6 +674,7 @@ function PaymentModal({
         kind,
         currency,
         amount,
+        exchange_rate: currency === "USD" ? rate : "0",
         account: accountId,
         occurred_at: tashkentToISO(occurredAt),
         period_start: periodStart || null,
@@ -685,7 +689,9 @@ function PaymentModal({
     },
   });
 
-  const canSave = userId && accountId && parseFloat(amount) > 0;
+  const canSave =
+    userId && accountId && parseFloat(amount) > 0 &&
+    (currency !== "USD" || parseFloat(rate) > 0);
   useModalHotkeys({
     onClose,
     onSaveExit: () => { if (canSave && !create.isPending) create.mutate(); },
@@ -774,6 +780,20 @@ function PaymentModal({
               </select>
             </Field>
           </div>
+          {currency === "USD" && (
+            <Field label="Kurs (1 USD = ? UZS)">
+              <input
+                className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                value={rate}
+                onChange={(e) => setRate(e.target.value)}
+                inputMode="decimal"
+                placeholder={String(DEFAULT_USD_RATE)}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Hisobotlarda to'lov shu kurs bo'yicha so'mga o'giriladi.
+              </p>
+            </Field>
+          )}
           <Field label="To'lov vaqti">
             <input
               type="datetime-local"
