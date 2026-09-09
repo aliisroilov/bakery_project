@@ -7,11 +7,21 @@ Production-based salary credits BOTH:
 The quantity is never split among group members — each member earns their own
 salary tariff on the whole batch, because the per-member rate already encodes
 their role/pay level (e.g. master baker vs helper).
+
+Rates are EFFECTIVE-DATED (SalaryRatePeriod): earnings are priced piecewise at
+the rate that was in effect on each production date / month / week, so editing
+someone's rate never retroactively re-prices past periods — the new rate only
+applies from its effective_from forward.
 """
 from __future__ import annotations
 
 from decimal import Decimal
 from datetime import date, datetime, timedelta
+
+# Rate types whose earnings come from production records (dated events) rather
+# than elapsed time.
+PRODUCTION_TYPES = ("per_meshok", "per_unit", "per_product")
+EPOCH = date(2000, 1, 1)
 
 
 def _count_weekly_periods(start: date, end: date, week_start_day: int) -> int:
@@ -103,71 +113,159 @@ def _earned_from_production(user, rate_type, rate, d_from=None, d_to=None, reset
     return total.quantize(Decimal("0.01"))
 
 
-def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Decimal:
-    """Compute earned salary for *user* within the given date range.
+# ─────────────────── Effective-dated rate timeline ───────────────────
 
-    For production-based rates (per_meshok / per_unit / per_product) only
-    production records that fall inside [date_from, date_to] are counted.
+def _rate_timeline(user, rate_obj):
+    """The user's rate history as a sorted list of
+    (effective_from, rate, rate_type, week_start_day).
 
-    For time-based rates (per_week / fixed_monthly) the number of days /
-    calendar months inside the range is used, so the number is meaningful
-    even when viewing a single month.
-
-    Falls back to calculate_earned (all-time) when no date bounds are given.
+    Falls back to a single epoch-dated period built from the current rate_obj
+    when no SalaryRatePeriod rows exist yet (pre-migration safety), so the whole
+    of history is priced at today's rate exactly like the old behaviour.
     """
-    from .models import RateType
+    from .models import SalaryRatePeriod
 
+    rows = list(SalaryRatePeriod.objects.filter(user=user).order_by("effective_from", "id"))
+    if rows:
+        return [(r.effective_from, Decimal(r.rate or 0), r.rate_type, r.week_start_day) for r in rows]
+    return [(EPOCH, Decimal(rate_obj.rate or 0), rate_obj.rate_type,
+             getattr(rate_obj, "week_start_day", None))]
+
+
+def _rate_on(timeline, d):
+    """The timeline entry in effect on date *d* — the last period whose
+    effective_from <= d (or the first period when d precedes all of them)."""
+    chosen = timeline[0]
+    for row in timeline:
+        if row[0] <= d:
+            chosen = row
+        else:
+            break
+    return chosen
+
+
+def _last_day_of_month(y: int, m: int) -> date:
+    import calendar
+    return date(y, m, calendar.monthrange(y, m)[1])
+
+
+def _iter_year_months(start: date, end: date):
+    y, m = start.year, start.month
+    while (y, m) <= (end.year, end.month):
+        yield y, m
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+
+
+def _seg_bounds(timeline, i, end):
+    """Half-open segment [effective_from, next_effective_from) for period *i*,
+    expressed as an inclusive (seg_from, seg_to) with seg_to = day before the
+    next period starts (or *end* for the last period)."""
+    seg_from = timeline[i][0]
+    seg_to = (timeline[i + 1][0] - timedelta(days=1)) if i + 1 < len(timeline) else end
+    return seg_from, seg_to
+
+
+def _earned_production_piecewise(user, timeline, floor, end, win_from=None, win_to=None):
+    """Production earnings, each segment priced at its own rate. *floor* =
+    reset_date (production before it never counts); *win_from/win_to* clip to a
+    display date range when given."""
+    total = Decimal("0.00")
+    for i in range(len(timeline)):
+        _eff, rate, rt, _wsd = timeline[i]
+        if rt not in PRODUCTION_TYPES:
+            continue
+        seg_from, seg_to = _seg_bounds(timeline, i, end)
+        if floor and seg_from < floor:
+            seg_from = floor
+        if win_from and seg_from < win_from:
+            seg_from = win_from
+        if win_to and seg_to > win_to:
+            seg_to = win_to
+        if seg_to > end:
+            seg_to = end
+        if seg_to < seg_from:
+            continue
+        total += _earned_from_production(user, rt, rate, d_from=seg_from, d_to=seg_to)
+    return total.quantize(Decimal("0.01"))
+
+
+def _earned_month_piecewise(timeline, start, end):
+    """Fixed-monthly: one rate per calendar month from *start* to *end*, priced
+    at the rate effective during that month (a mid-month change applies to the
+    whole month). Single-period timeline → months × rate, exactly as before."""
+    if end < start:
+        return Decimal("0.00")
+    total = Decimal("0.00")
+    for y, m in _iter_year_months(start, end):
+        total += _rate_on(timeline, _last_day_of_month(y, m))[1]
+    return total.quantize(Decimal("0.01"))
+
+
+def _earned_week_piecewise(timeline, start, end, wsd_default, inclusive_end=False):
+    """Per-week: each segment's weeks (aligned to week_start_day, else the
+    days÷7 fraction) priced at its rate."""
+    if end < start:
+        return Decimal("0.00")
+    total = Decimal("0.00")
+    for i in range(len(timeline)):
+        _eff, rate, _rt, wsd = timeline[i]
+        seg_from, seg_to = _seg_bounds(timeline, i, end)
+        if seg_from < start:
+            seg_from = start
+        if seg_to > end:
+            seg_to = end
+        if seg_to < seg_from:
+            continue
+        wsd_use = wsd if wsd is not None else wsd_default
+        if wsd_use is not None:
+            weeks = Decimal(_count_weekly_periods(seg_from, seg_to, wsd_use))
+        else:
+            days = max((seg_to - seg_from).days + (1 if inclusive_end else 0), 0)
+            weeks = Decimal(str(days)) / Decimal("7")
+        total += weeks * rate
+    return total.quantize(Decimal("0.01"))
+
+
+def calculate_earned_period(user, rate_obj, date_from=None, date_to=None) -> Decimal:
+    """Earned salary for *user* within [date_from, date_to], priced at the rate
+    in effect on each date (effective-dated). No range → all-time earned.
+
+    For production rates only production inside the range counts; for time-based
+    rates the months/weeks inside the range are counted.
+    """
     if rate_obj is None:
         return Decimal("0.00")
 
     d_from = _parse_date(date_from)
     d_to = _parse_date(date_to)
-    reset = getattr(rate_obj, "reset_date", None)
-
-    # No range — delegate to the all-time function
     if d_from is None and d_to is None:
         return calculate_earned(user, rate_obj)
 
-    rate = Decimal(rate_obj.rate or 0)
+    today = date.today()
+    reset = getattr(rate_obj, "reset_date", None)
+    timeline = _rate_timeline(user, rate_obj)
     rt = rate_obj.rate_type
 
-    # ── Production-based rates (individual + group share) ──────────────────────
-    if rt in (RateType.PER_MESHOK, RateType.PER_UNIT, RateType.PER_PRODUCT):
-        return _earned_from_production(user, rt, rate, d_from, d_to, reset)
+    if rt in PRODUCTION_TYPES:
+        return _earned_production_piecewise(user, timeline, reset, today, win_from=d_from, win_to=d_to)
 
     # ── Time-based rates ──────────────────────────────────────────────────────
-    today = date.today()
     effective_from = d_from or today
     effective_to = d_to or today
-    # Salary only accrues for days that have actually elapsed — never bill a
-    # future end date. (The UI caps date_to at today, but a manually chosen
-    # future date must not inflate earned/owed.)
     if effective_to > today:
         effective_to = today
-    # Apply the reset floor: nothing accrues before it.
     if reset and reset > effective_from:
         effective_from = reset
     if effective_to < effective_from:
-        return Decimal("0.00")  # range is entirely before the reset date
+        return Decimal("0.00")
 
-    if rt == RateType.PER_WEEK:
-        wsd = getattr(rate_obj, "week_start_day", None)
-        if wsd is not None:
-            weeks = Decimal(_count_weekly_periods(effective_from, effective_to, wsd))
-        else:
-            days = max((effective_to - effective_from).days + 1, 0)
-            weeks = Decimal(str(days)) / Decimal("7")
-        return (weeks * rate).quantize(Decimal("0.01"))
-
-    if rt == RateType.FIXED_MONTHLY:
-        # Count distinct calendar months touched by the range.
-        months = (
-            (effective_to.year - effective_from.year) * 12
-            + (effective_to.month - effective_from.month)
-            + 1
-        )
-        return (Decimal(max(months, 1)) * rate).quantize(Decimal("0.01"))
-
+    if rt == "per_week":
+        return _earned_week_piecewise(timeline, effective_from, effective_to,
+                                      getattr(rate_obj, "week_start_day", None), inclusive_end=True)
+    if rt == "fixed_monthly":
+        return _earned_month_piecewise(timeline, effective_from, effective_to)
     return Decimal("0.00")
 
 
@@ -197,47 +295,31 @@ def salary_outstanding(user, rate_obj=None) -> Decimal:
 
 
 def calculate_earned(user, rate_obj) -> Decimal:
-    """Compute earned salary for `user` based on their SalaryRate.
-
-    Handles all v2 rate types. Returns Decimal("0.00") if rate is null or type unknown.
+    """All-time earned salary for `user`, priced at the effective-dated rate for
+    each period. Returns Decimal("0.00") if rate is null or type unknown.
     """
-    from .models import RateType
-
     if rate_obj is None:
         return Decimal("0.00")
 
-    rate = Decimal(rate_obj.rate or 0)
-    rt = rate_obj.rate_type
+    today = date.today()
     reset = getattr(rate_obj, "reset_date", None)
+    timeline = _rate_timeline(user, rate_obj)
+    rt = rate_obj.rate_type
 
     # ── Production-based rates (individual + group share) ──────────────────────
-    if rt in (RateType.PER_MESHOK, RateType.PER_UNIT, RateType.PER_PRODUCT):
-        return _earned_from_production(user, rt, rate, reset_date=reset)
+    if rt in PRODUCTION_TYPES:
+        return _earned_production_piecewise(user, timeline, reset, today)
 
-    if rt == RateType.PER_WEEK:
-        # Count total days since hire ÷ 7 = fractional weeks accumulated.
-        # Using last-payment date caused earned to show 0 for 6 days after each payment.
-        start = user.date_joined.date() if hasattr(user, "date_joined") else date.today()
-        if reset and reset > start:
-            start = reset  # nothing accrues before the reset date
-        wsd = getattr(rate_obj, "week_start_day", None)
-        if wsd is not None:
-            weeks = Decimal(_count_weekly_periods(start, date.today(), wsd))
-        else:
-            days = max((date.today() - start).days, 0)
-            weeks = Decimal(str(days)) / Decimal("7")
-        return (weeks * rate).quantize(Decimal("0.01"))
+    # ── Time-based rates: accrue from hire (or the reset floor) to today ───────
+    start = user.date_joined.date() if getattr(user, "date_joined", None) else today
+    if reset and reset > start:
+        start = reset  # nothing accrues before the reset date
 
-    if rt == RateType.FIXED_MONTHLY:
-        # Count total months worked since hire (including current partial month).
-        # Returning just `rate` caused remaining to go negative after month 1 was paid.
-        start = user.date_joined.date() if hasattr(user, "date_joined") else date.today()
-        if reset and reset > start:
-            start = reset  # nothing accrues before the reset date
-        today = date.today()
+    if rt == "per_week":
+        return _earned_week_piecewise(timeline, start, today,
+                                      getattr(rate_obj, "week_start_day", None))
+    if rt == "fixed_monthly":
         if today < start:
             return Decimal("0.00")
-        months = (today.year - start.year) * 12 + (today.month - start.month) + 1
-        return (Decimal(max(months, 1)) * rate).quantize(Decimal("0.01"))
-
+        return _earned_month_piecewise(timeline, start, today)
     return Decimal("0.00")

@@ -7,6 +7,9 @@ from .models import SalaryPayment, SalaryRate
 
 class SalaryRateSerializer(serializers.ModelSerializer):
     user_display = serializers.CharField(source="user.display_name", read_only=True)
+    # Effective-dated rate history (read-only) so the UI can show/explain that a
+    # rate change only applies forward and past periods keep their old rate.
+    rate_periods = serializers.SerializerMethodField()
 
     class Meta:
         model = SalaryRate
@@ -14,9 +17,24 @@ class SalaryRateSerializer(serializers.ModelSerializer):
             "id", "user", "user_display",
             "rate_type", "currency", "rate",
             "initial_balance", "reset_date", "week_start_day", "note",
+            "rate_periods",
             "created_at",
         ]
         read_only_fields = ["created_at"]
+
+    def get_rate_periods(self, obj):
+        from .models import SalaryRatePeriod
+
+        return [
+            {
+                "effective_from": p.effective_from.isoformat(),
+                "rate": str(p.rate),
+                "rate_type": p.rate_type,
+                "currency": p.currency,
+                "week_start_day": p.week_start_day,
+            }
+            for p in SalaryRatePeriod.objects.filter(user=obj.user).order_by("effective_from")
+        ]
 
 
 class SalaryPaymentSerializer(UsdRateMixin, serializers.ModelSerializer):

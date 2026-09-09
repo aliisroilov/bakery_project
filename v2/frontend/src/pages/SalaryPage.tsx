@@ -57,6 +57,13 @@ interface EmployeeRate {
   reset_date: string | null;
   week_start_day: number | null;
   note: string;
+  rate_periods?: {
+    effective_from: string;
+    rate: string;
+    rate_type: string;
+    currency: string;
+    week_start_day: number | null;
+  }[];
 }
 
 interface EmployeeSummary {
@@ -885,6 +892,18 @@ function RateModal({
     existing?.week_start_day != null ? String(existing.week_start_day) : "",
   );
   const [note, setNote] = useState(existing?.note ?? "");
+  const today = new Date().toISOString().slice(0, 10);
+  // Date a CHANGED rate takes effect (past periods keep their old rate).
+  const [effectiveFrom, setEffectiveFrom] = useState(today);
+
+  // Whether a pay-affecting field differs from the saved rate — only then does a
+  // new effective-dated period get created (and the date picker matters).
+  const rateChanged =
+    !!existing &&
+    (rateType !== existing.rate_type ||
+      rate !== existing.rate ||
+      currency !== existing.currency ||
+      (weekStartDay === "" ? null : Number(weekStartDay)) !== existing.week_start_day);
 
   const save = useMutation({
     mutationFn: () => {
@@ -897,6 +916,7 @@ function RateModal({
         reset_date: resetDate || null,
         week_start_day: weekStartDay === "" ? null : Number(weekStartDay),
         note,
+        effective_from: effectiveFrom,
       };
       if (existing) {
         return api.patch(`/salary/rates/${existing.id}/`, payload);
@@ -960,6 +980,19 @@ function RateModal({
               </select>
             </Field>
           </div>
+          {rateChanged && (
+            <Field label="Yangi tarif amaldan boshlab">
+              <input
+                type="date"
+                className="w-full h-10 rounded-lg border border-bakery-400 bg-bakery-50/50 px-3 text-sm tabular-nums"
+                value={effectiveFrom}
+                onChange={(e) => setEffectiveFrom(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Yangi tarif faqat shu sanadan boshlab qo'llanadi — oldingi davrlar eski tarifda qoladi (o'zgarmaydi).
+              </p>
+            </Field>
+          )}
           <Field label="Boshlang'ich qarz (biz unga qarzmiz = musbat)">
             <input
               className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
@@ -1011,6 +1044,25 @@ function RateModal({
               onChange={(e) => setNote(e.target.value)}
             />
           </Field>
+          {existing?.rate_periods && existing.rate_periods.length > 1 && (
+            <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs">
+              <div className="font-medium mb-1 text-muted-foreground">Tarif tarixi</div>
+              <ul className="space-y-0.5 tabular-nums">
+                {existing.rate_periods.map((p, i) => (
+                  <li key={i} className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">
+                      {p.effective_from <= "2000-01-01"
+                        ? "Boshidan"
+                        : `${p.effective_from.split("-").reverse().join(".")} dan`}
+                    </span>
+                    <span className="text-foreground">
+                      {formatMoney(p.rate, p.currency as "UZS" | "USD")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
         {save.isError && (
           <div className="mt-3 text-sm text-destructive bg-destructive/10 rounded-lg p-3">

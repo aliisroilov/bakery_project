@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -14,9 +15,9 @@ from apps.core.permissions import ReadOrManagerWrite
 from apps.finance.models import KassaAccount, KassaTransaction, KassaTransactionType
 from apps.production.models import Production
 
-from .models import PaymentKind, SalaryPayment, SalaryRate
+from .models import PaymentKind, SalaryPayment, SalaryRate, SalaryRatePeriod
 from .serializers import SalaryPaymentSerializer, SalaryRateSerializer
-from .utils import calculate_earned, calculate_earned_period
+from .utils import _parse_date, calculate_earned, calculate_earned_period
 
 
 class SalaryRateViewSet(viewsets.ModelViewSet):
@@ -29,6 +30,40 @@ class SalaryRateViewSet(viewsets.ModelViewSet):
         if user := self.request.query_params.get("user"):
             qs = qs.filter(user_id=user)
         return qs
+
+    def _sync_period(self, rate_obj, effective_from):
+        """Record an effective-dated snapshot of the rate. Keyed on
+        (user, effective_from) so re-saving the same day updates in place."""
+        SalaryRatePeriod.objects.update_or_create(
+            user_id=rate_obj.user_id,
+            effective_from=effective_from,
+            defaults=dict(
+                rate_type=rate_obj.rate_type,
+                currency=rate_obj.currency,
+                rate=rate_obj.rate,
+                week_start_day=rate_obj.week_start_day,
+            ),
+        )
+
+    def perform_create(self, serializer):
+        rate_obj = serializer.save()
+        # A brand-new rate covers all of the employee's history unless a start
+        # date is pinned — seed the first period at the epoch.
+        eff = _parse_date(self.request.data.get("effective_from")) or date(2000, 1, 1)
+        self._sync_period(rate_obj, eff)
+
+    def perform_update(self, serializer):
+        # Only a change to a PAY-affecting field appends a new period; editing
+        # note / initial_balance / reset_date alone must not re-price anything.
+        old = serializer.instance
+        old_key = (old.rate_type, old.currency, str(old.rate), old.week_start_day)
+        rate_obj = serializer.save()
+        new_key = (rate_obj.rate_type, rate_obj.currency, str(rate_obj.rate), rate_obj.week_start_day)
+        if new_key != old_key:
+            # New rate applies from its effective date FORWARD (default today);
+            # past periods keep the rate that was in effect then.
+            eff = _parse_date(self.request.data.get("effective_from")) or timezone.localdate()
+            self._sync_period(rate_obj, eff)
 
 
 KIND_TO_KASSA_KIND = {

@@ -69,6 +69,40 @@ class SalaryRate(TimestampedModel):
         return f"{self.user.display_name}: {self.rate} {self.currency} ({self.get_rate_type_display()})"
 
 
+class SalaryRatePeriod(TimestampedModel):
+    """Effective-dated snapshot of a user's pay rate.
+
+    Earnings that fall on or after `effective_from` (until the next period's
+    date) are priced at THIS period's rate. Changing someone's rate appends a
+    new period instead of overwriting, so past periods keep the rate that was in
+    effect then and are never retroactively re-priced. `SalaryRate` still holds
+    the CURRENT (latest) rate for editing and quick reads; the periods are the
+    source of truth for `calculate_earned`.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="rate_periods",
+    )
+    rate_type = models.CharField(max_length=20, choices=RateType.choices)
+    currency = models.CharField(max_length=3, choices=Currency.CHOICES, default=Currency.UZS)
+    rate = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0
+    )
+    week_start_day = models.IntegerField(
+        null=True, blank=True, choices=Weekday.choices
+    )
+    effective_from = models.DateField(db_index=True)
+
+    class Meta:
+        ordering = ["user__username", "effective_from"]
+        indexes = [models.Index(fields=["user", "effective_from"])]
+
+    def __str__(self) -> str:
+        return f"{self.user.display_name}: {self.rate} {self.currency} from {self.effective_from}"
+
+
 class PaymentKind(models.TextChoices):
     """Feature #4: keep these visually and logically separate."""
 
