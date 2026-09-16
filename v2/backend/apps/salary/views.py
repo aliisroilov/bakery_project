@@ -15,9 +15,25 @@ from apps.core.permissions import ReadOrManagerWrite
 from apps.finance.models import KassaAccount, KassaTransaction, KassaTransactionType
 from apps.production.models import Production
 
-from .models import PaymentKind, SalaryPayment, SalaryRate, SalaryRatePeriod
-from .serializers import SalaryPaymentSerializer, SalaryRateSerializer
-from .utils import _parse_date, calculate_earned, calculate_earned_period
+from .models import (
+    PaymentKind,
+    SalaryPayment,
+    SalaryRate,
+    SalaryRatePeriod,
+    UserProductRate,
+)
+from .serializers import (
+    SalaryPaymentSerializer,
+    SalaryRateSerializer,
+    UserProductRateSerializer,
+)
+from .utils import (
+    _parse_date,
+    calculate_earned,
+    calculate_earned_period,
+    missing_product_rates,
+    user_product_rate_map,
+)
 
 
 class SalaryRateViewSet(viewsets.ModelViewSet):
@@ -64,6 +80,27 @@ class SalaryRateViewSet(viewsets.ModelViewSet):
             # past periods keep the rate that was in effect then.
             eff = _parse_date(self.request.data.get("effective_from")) or timezone.localdate()
             self._sync_period(rate_obj, eff)
+
+
+class UserProductRateViewSet(viewsets.ModelViewSet):
+    """Per-worker, per-product pay rates (rate_type=per_product).
+
+    Flat collection filterable by ?user= / ?product=, mirroring how product
+    recipes are exposed at /inventory/recipes/?product=.
+    """
+
+    permission_classes = [ReadOrManagerWrite]
+    serializer_class = UserProductRateSerializer
+    queryset = UserProductRate.objects.select_related("user", "product")
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        p = self.request.query_params
+        if user := p.get("user"):
+            qs = qs.filter(user_id=user)
+        if product := p.get("product"):
+            qs = qs.filter(product_id=product)
+        return qs
 
 
 KIND_TO_KASSA_KIND = {
@@ -211,6 +248,13 @@ class ProductionBreakdownView(APIView):
         # (production before the reset isn't counted toward salary).
         rate = SalaryRate.objects.filter(user_id=user_id).first()
         reset = rate.reset_date if rate else None
+        # This worker's OWN per-product rates (per qop) — what per_product pay is
+        # actually computed from, so the drawer explains the real figure.
+        own_rates = (
+            user_product_rate_map(rate.user)
+            if rate and rate.rate_type == "per_product"
+            else {}
+        )
 
         # Both individual and group productions count the FULL quantity for this
         # user — matching the salary calculation (no split among group members).
@@ -252,7 +296,11 @@ class ProductionBreakdownView(APIView):
                     "product_name": p.product.name,
                     "meshok": Decimal("0"),
                     "units": Decimal("0"),
-                    "salary_per_unit": str(p.product.production_salary_per_unit_uzs or 0),
+                    # This worker's own qop rate for the product; None when they
+                    # have no rate for it (those qop earn 0 — flagged in the UI).
+                    "rate_per_meshok": (
+                        str(own_rates[p.product_id]) if p.product_id in own_rates else None
+                    ),
                 },
             )
             prod_entry["meshok"] += meshok
@@ -272,7 +320,7 @@ class ProductionBreakdownView(APIView):
                             "product_name": pv["product_name"],
                             "meshok": str(pv["meshok"]),
                             "units": str(pv["units"]),
-                            "salary_per_unit": pv["salary_per_unit"],
+                            "rate_per_meshok": pv["rate_per_meshok"],
                         }
                         for pv in entry["products"].values()
                     ],
@@ -360,6 +408,33 @@ class SalaryEmployeeSummaryView(APIView):
                 .first()
             )
 
+            # ── Per-product setup (rate_type=per_product): what this worker is set
+            # up to make and their own money for each. `missing` lists products
+            # they DID produce with no rate configured — those qop earn 0 until a
+            # manager fills the rate in, so the page warns instead of silently
+            # under-paying (same spirit as the Tan narxi "no recorded price" flag).
+            product_rates = []
+            missing_rates = []
+            if rate_obj and rate_obj.rate_type == "per_product":
+                product_rates = [
+                    {
+                        "id": r.id,
+                        "product_id": r.product_id,
+                        "product_name": r.product.name,
+                        "rate_per_meshok_uzs": str(r.rate_per_meshok_uzs),
+                        "meshok_size": str(r.product.meshok_size),
+                    }
+                    for r in UserProductRate.objects.filter(user=u).select_related("product")
+                ]
+                missing_rates = [
+                    {
+                        "product_id": m["product_id"],
+                        "product_name": m["product_name"],
+                        "meshok": str(m["meshok"]),
+                    }
+                    for m in missing_product_rates(u, rate_obj)
+                ]
+
             rate_data = None
             if rate_obj:
                 rate_data = {
@@ -383,6 +458,9 @@ class SalaryEmployeeSummaryView(APIView):
                     u.produced_product.name if u.produced_product_id else None
                 ),
                 "rate": rate_data,
+                # Per-product setup — only populated for rate_type=per_product.
+                "product_rates": product_rates,
+                "missing_product_rates": missing_rates,
                 # Earned within the selected range — "Hisoblangan".
                 "earned_period": str(earned_period),
                 # Payments made within the selected range.

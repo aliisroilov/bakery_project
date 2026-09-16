@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers import UsdRateMixin
 
-from .models import SalaryPayment, SalaryRate
+from .models import SalaryPayment, SalaryRate, UserProductRate
 
 
 class SalaryRateSerializer(serializers.ModelSerializer):
@@ -35,6 +35,43 @@ class SalaryRateSerializer(serializers.ModelSerializer):
             }
             for p in SalaryRatePeriod.objects.filter(user=obj.user).order_by("effective_from")
         ]
+
+
+class UserProductRateSerializer(serializers.ModelSerializer):
+    """One worker's pay rate for one product they are set up to produce."""
+
+    user_display = serializers.CharField(source="user.display_name", read_only=True)
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    # Batch size, so the UI can show the linked "1 dona" figure next to "1 qop"
+    # without a second request (same paired-input idea as the product modal).
+    meshok_size = serializers.DecimalField(
+        source="product.meshok_size", max_digits=14, decimal_places=3, read_only=True
+    )
+
+    class Meta:
+        model = UserProductRate
+        fields = [
+            "id", "user", "user_display",
+            "product", "product_name", "meshok_size",
+            "rate_per_meshok_uzs", "note",
+            "created_at",
+        ]
+        read_only_fields = ["created_at"]
+
+    def validate(self, attrs):
+        """Keep one rate per (user, product) — re-saving an existing pair updates
+        it instead of 500ing on the unique constraint."""
+        user = attrs.get("user") or getattr(self.instance, "user", None)
+        product = attrs.get("product") or getattr(self.instance, "product", None)
+        if user and product:
+            clash = UserProductRate.objects.filter(user=user, product=product)
+            if self.instance:
+                clash = clash.exclude(pk=self.instance.pk)
+            if clash.exists():
+                raise serializers.ValidationError(
+                    {"product": "Bu ishchi uchun bu mahsulot tarifi allaqachon mavjud."}
+                )
+        return attrs
 
 
 class SalaryPaymentSerializer(UsdRateMixin, serializers.ModelSerializer):

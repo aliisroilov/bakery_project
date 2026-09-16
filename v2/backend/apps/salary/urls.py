@@ -6,6 +6,7 @@ from .views import (
     SalaryEmployeeSummaryView,
     SalaryPaymentViewSet,
     SalaryRateViewSet,
+    UserProductRateViewSet,
 )
 
 app_name = "salary"
@@ -13,6 +14,7 @@ app_name = "salary"
 router = DefaultRouter()
 router.register(r"rates", SalaryRateViewSet, basename="rate")
 router.register(r"payments", SalaryPaymentViewSet, basename="payment")
+router.register(r"user-product-rates", UserProductRateViewSet, basename="user-product-rate")
 
 urlpatterns = [
     path("employees/", SalaryEmployeeSummaryView.as_view(), name="employees-summary"),

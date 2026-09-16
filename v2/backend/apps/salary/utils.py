@@ -8,6 +8,11 @@ The quantity is never split among group members — each member earns their own
 salary tariff on the whole batch, because the per-member rate already encodes
 their role/pay level (e.g. master baker vs helper).
 
+Rate types per_meshok / per_unit price every product the same. per_product
+prices each product at THIS worker's own rate for it (UserProductRate), so a
+master baker and a helper on the same batch earn different money, and the same
+person can be set up for several products at several different amounts.
+
 Rates are EFFECTIVE-DATED (SalaryRatePeriod): earnings are priced piecewise at
 the rate that was in effect on each production date / month / week, so editing
 someone's rate never retroactively re-prices past periods — the new rate only
@@ -98,9 +103,29 @@ def _production_contributions(user, d_from=None, d_to=None, reset_date=None):
         yield Decimal(p.meshok_count or 0), Decimal(p.unit_count or 0), p.product
 
 
+def user_product_rate_map(user) -> dict:
+    """{product_id: rate_per_meshok} — this user's OWN per-product pay rates.
+
+    Each worker configures their own amount for each product they make, so two
+    people on the same product can legitimately earn different money.
+    """
+    from .models import UserProductRate
+
+    return {
+        r.product_id: Decimal(r.rate_per_meshok_uzs or 0)
+        for r in UserProductRate.objects.filter(user=user)
+    }
+
+
 def _earned_from_production(user, rate_type, rate, d_from=None, d_to=None, reset_date=None) -> Decimal:
     """Sum a user's production-based earnings (individual + group, full quantity)."""
     from .models import RateType
+
+    # PER_PRODUCT is priced per qop from the worker's own rate table. A product
+    # they produced but have NO rate for earns 0 rather than silently borrowing
+    # somebody else's number — see missing_product_rates(), which surfaces those
+    # so a manager can fix the setup instead of quietly under/over-paying.
+    rates = user_product_rate_map(user) if rate_type == RateType.PER_PRODUCT else {}
 
     total = Decimal("0.00")
     for meshok, units, product in _production_contributions(user, d_from, d_to, reset_date):
@@ -109,8 +134,38 @@ def _earned_from_production(user, rate_type, rate, d_from=None, d_to=None, reset
         elif rate_type == RateType.PER_UNIT:
             total += units * rate
         elif rate_type == RateType.PER_PRODUCT:
-            total += units * Decimal(product.production_salary_per_unit_uzs or 0)
+            total += meshok * rates.get(product.id, Decimal("0"))
     return total.quantize(Decimal("0.01"))
+
+
+def missing_product_rates(user, rate_obj=None) -> list:
+    """Products this PER_PRODUCT worker actually produced but has no rate for.
+
+    Those qop currently earn 0, so the Oylik page flags them — the same idea as
+    the Tan narxi report flagging ingredients with no recorded price. Returns
+    [{"product_id", "product_name", "meshok"}], newest data first, or [] when the
+    worker isn't on the per-product rate type.
+    """
+    from .models import RateType
+
+    if rate_obj is None:
+        rate_obj = getattr(user, "salary_rate", None)
+    if rate_obj is None or rate_obj.rate_type != RateType.PER_PRODUCT:
+        return []
+
+    rates = user_product_rate_map(user)
+    missing: dict[int, dict] = {}
+    for meshok, _units, product in _production_contributions(
+        user, reset_date=getattr(rate_obj, "reset_date", None)
+    ):
+        if product.id in rates:
+            continue
+        entry = missing.setdefault(
+            product.id,
+            {"product_id": product.id, "product_name": product.name, "meshok": Decimal("0")},
+        )
+        entry["meshok"] += meshok
+    return sorted(missing.values(), key=lambda e: -e["meshok"])
 
 
 # ─────────────────── Effective-dated rate timeline ───────────────────

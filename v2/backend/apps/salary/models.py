@@ -15,7 +15,9 @@ class RateType(models.TextChoices):
     PER_MESHOK = "per_meshok", "Meshok boshi"     # nonvoy: paid per batch
     PER_WEEK = "per_week", "Haftalik"             # driver: paid weekly
     FIXED_MONTHLY = "fixed_monthly", "Oylik qat'iy"
-    # Feature #14: per-product rate — handled by Product.production_salary_per_unit_uzs.
+    # Feature #14: per-product rate — priced from this worker's own UserProductRate
+    # rows (one per product they are set up to produce), NOT from a single global
+    # number on the Product.
     PER_PRODUCT = "per_product", "Mahsulot bo'yicha"
 
 
@@ -41,7 +43,7 @@ class SalaryRate(TimestampedModel):
     rate_type = models.CharField(max_length=20, choices=RateType.choices)
     currency = models.CharField(max_length=3, choices=Currency.CHOICES, default=Currency.UZS)
     # Amount per unit — interpretation depends on rate_type.
-    # Ignored when rate_type=PER_PRODUCT (that uses Product.production_salary_per_unit_uzs).
+    # Ignored when rate_type=PER_PRODUCT (that reads the user's UserProductRate rows).
     rate = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=0
     )
@@ -101,6 +103,58 @@ class SalaryRatePeriod(TimestampedModel):
 
     def __str__(self) -> str:
         return f"{self.user.display_name}: {self.rate} {self.currency} from {self.effective_from}"
+
+
+class UserProductRate(TimestampedModel):
+    """One worker's OWN pay rate for ONE product (rate_type=PER_PRODUCT).
+
+    A nonvoy (or every member of an EmployeeGroup) can be set up to make several
+    different products, each paid at a different amount — and two people making
+    the SAME product may be paid differently (master baker vs helper). That is
+    why the rate lives here, on the worker, instead of on the Product: the
+    Product-level `production_salary_per_unit_uzs` is one global number for
+    everybody and cannot express that.
+
+    The rate is per QOP (meshok), matching how production is actually recorded:
+    `Production.meshok_count` is always filled, while `unit_count` is a manual
+    optional field that is 0 on nearly every row. The per-piece equivalent is
+    derived for display via `Product.meshok_size`.
+
+    Not effective-dated (unlike SalaryRatePeriod): the client asked for per-worker
+    rates, not rate history for them. Editing a rate re-prices production in the
+    currently OPEN period — which is bounded by `SalaryRate.reset_date`, since
+    production before a period close is never counted at all.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="product_rates",
+    )
+    product = models.ForeignKey(
+        "products.Product",
+        on_delete=models.CASCADE,
+        related_name="user_rates",
+    )
+    rate_per_meshok_uzs = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=0,
+        help_text="Shu ishchi shu mahsulotdan 1 qop (meshok) uchun oladigan summa, so'm.",
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["user__username", "product__sort_order", "product__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "product"], name="uniq_user_product_rate"
+            )
+        ]
+        indexes = [models.Index(fields=["user", "product"])]
+
+    def __str__(self) -> str:
+        return f"{self.user.display_name} · {self.product.name}: {self.rate_per_meshok_uzs}/qop"
 
 
 class PaymentKind(models.TextChoices):
