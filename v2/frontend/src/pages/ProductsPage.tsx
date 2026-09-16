@@ -466,6 +466,24 @@ function ProductModal({
                 inputMode="decimal"
               />
             </Field>
+            <Field label="Nonvoyga 1 qop">
+              <input
+                className="w-full h-10 px-3 rounded-lg border bg-background text-sm tabular-nums"
+                value={
+                  (parseFloat(meshokSize) || 0) > 0
+                    ? String(Math.round((parseFloat(salary) || 0) * (parseFloat(meshokSize) || 0)))
+                    : ""
+                }
+                onChange={(e) => {
+                  const meshok = parseFloat(meshokSize) || 0;
+                  const perMeshok = parseFloat(e.target.value) || 0;
+                  if (meshok > 0) setSalary(String(perMeshok / meshok));
+                }}
+                disabled={(parseFloat(meshokSize) || 0) <= 0}
+                inputMode="decimal"
+                title="Ikkalasi bog'langan — birini o'zgartirsangiz, ikkinchisi meshok hajmiga qarab o'zi hisoblanadi"
+              />
+            </Field>
             <Field label="Kommunal 1 qop (gaz/svet)">
               <input
                 className="w-full h-10 px-3 rounded-lg border bg-background text-sm tabular-nums"
@@ -483,6 +501,11 @@ function ProductModal({
               />
             </Field>
           </div>
+          <p className="text-xs text-muted-foreground -mt-1">
+            <b>Nonvoyga 1 dona</b> va <b>Nonvoyga 1 qop</b> — bog'langan: birini kiritsangiz,
+            ikkinchisi meshok hajmiga qarab o'zi hisoblanadi. Har bir mahsulot uchun boshqa-boshqa
+            qiymat qo'yish mumkin (masalan barankaga bir xil, nonga boshqa summa).
+          </p>
           <p className="text-xs text-muted-foreground -mt-1">
             Kommunal (gaz/svet) va Boshqa — <b>1 qop (meshok)</b> uchun, so'm. Tan narxiga
             qo'shiladi. Ikkilanib hisoblanmasligi uchun <b>Kommunal</b> xarajat kategoriyasini
