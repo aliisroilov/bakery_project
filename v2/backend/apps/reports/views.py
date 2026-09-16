@@ -376,7 +376,8 @@ def _build_labour_map(days: int = 90) -> dict:
     _earned_from_production:
       - per_meshok baker → rate per meshok
       - per_unit baker   → rate × units produced (÷ meshoks)
-      - per_product      → Product.production_salary_per_unit_uzs × units
+      - per_product      → this worker's OWN qop rate for that product
+                           (UserProductRate), 0 when they have none configured
       - group run        → sum of each member's production wage (every member
                            earns their full tariff on the batch)
       - time-based (per_week / fixed_monthly) bakers contribute 0 to unit COS
@@ -388,7 +389,7 @@ def _build_labour_map(days: int = 90) -> dict:
     """
     from datetime import timedelta
 
-    from apps.salary.models import RateType, SalaryRate
+    from apps.salary.models import RateType, SalaryRate, UserProductRate
     from apps.users.models import EmployeeGroup
 
     rates = {r.user_id: (r.rate_type, float(r.rate or 0)) for r in SalaryRate.objects.all()}
@@ -396,14 +397,19 @@ def _build_labour_map(days: int = 90) -> dict:
         g.id: list(g.members.values_list("id", flat=True))
         for g in EmployeeGroup.objects.prefetch_related("members")
     }
+    # (user, product) → that worker's own qop rate, for per_product bakers.
+    product_rates = {
+        (r.user_id, r.product_id): float(r.rate_per_meshok_uzs or 0)
+        for r in UserProductRate.objects.all()
+    }
 
-    def _unit_labour(rate_type, rate, meshok, units, psu):
+    def _unit_labour(user_id, product_id, rate_type, rate, meshok, units):
         if rate_type == RateType.PER_MESHOK:
             return meshok * rate
         if rate_type == RateType.PER_UNIT:
             return units * rate
         if rate_type == RateType.PER_PRODUCT:
-            return units * psu
+            return meshok * product_rates.get((user_id, product_id), 0.0)
         return 0.0  # time-based rates are not per-meshok direct labour
 
     cutoff = timezone.localdate() - timedelta(days=days)
@@ -412,23 +418,20 @@ def _build_labour_map(days: int = 90) -> dict:
     runs = (
         Production.objects
         .filter(occurred_at__date__gte=cutoff)
-        .values(
-            "product_id", "nonvoy_id", "group_id", "meshok_count", "unit_count",
-            "product__production_salary_per_unit_uzs",
-        )
+        .values("product_id", "nonvoy_id", "group_id", "meshok_count", "unit_count")
     )
     for r in runs:
+        pid_run = r["product_id"]
         meshok = float(r["meshok_count"] or 0)
         units = float(r["unit_count"] or 0)
-        psu = float(r["product__production_salary_per_unit_uzs"] or 0)
         if r["nonvoy_id"] and r["nonvoy_id"] in rates:
             key = ("n", r["nonvoy_id"])
             rt, rate = rates[r["nonvoy_id"]]
-            labour = _unit_labour(rt, rate, meshok, units, psu)
+            labour = _unit_labour(r["nonvoy_id"], pid_run, rt, rate, meshok, units)
         elif r["group_id"]:
             key = ("g", r["group_id"])
             labour = sum(
-                _unit_labour(*rates[uid], meshok, units, psu)
+                _unit_labour(uid, pid_run, *rates[uid], meshok, units)
                 for uid in group_members.get(r["group_id"], [])
                 if uid in rates
             )
@@ -596,10 +599,20 @@ def _collect_pnl_data(start, end, tz):
         bucket[r["d"]] = bucket.get(r["d"], 0.0) + float(r["total"] or 0)
 
     # NONVOY (baker) wages are DIRECT PRODUCTION labour, so they fold into Tan
-    # narxi (cost of goods) — matching the standalone Tan narxi report, which
-    # already prices in nonvoy pay. Advances are prepayments (excluded);
-    # deductions reduce the expense (subtracted). Other roles' wages are NOT a
-    # P&L line — the row below Op. foyda is Harajatlar (owner draws) instead.
+    # narxi (cost of goods). Advances are prepayments (excluded); deductions
+    # reduce the expense (subtracted). Other roles' wages are NOT a P&L line —
+    # the row below Op. foyda is Harajatlar (owner draws) instead.
+    #
+    # NOTE, two real limitations of this line — both verified against Jul/Aug/Sep
+    # 2026 data, neither is a rounding artefact:
+    #   1. It is CASH PAID in the period, not wages EARNED in it, while every
+    #      other P&L input is accrual. So a catch-up payout inflates that month's
+    #      Tan narxi. It is therefore NOT the same figure as the standalone Tan
+    #      narxi report, which prices labour at the standard per-qop rate from
+    #      _build_labour_map (Jul: 45.9M paid vs 42.9M standard; Aug: 37.7M vs
+    #      34.4M; 1-16 Sep: 14.6M vs 12.3M).
+    #   2. Only role="nonvoy" counts, so driver / manager / accountant pay
+    #      appears in NO P&L line at all (Jul 5.0M, Aug 2.4M).
     sal_rows = (
         SalaryPayment.objects
         .filter(
