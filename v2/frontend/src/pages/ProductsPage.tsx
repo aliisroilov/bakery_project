@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Wheat, Plus, RefreshCw, Trash2, Pencil, Archive, ArchiveRestore } from "lucide-react";
 import { api } from "../lib/api";
@@ -10,6 +10,7 @@ interface Ingredient {
   id: number;
   name: string;
   unit_short: string;
+  avg_cost_uzs: string;
 }
 
 interface RecipeLine {
@@ -310,6 +311,35 @@ function ProductModal({
     (l) => l.ingredient && parseFloat(l.amount_per_meshok) > 0,
   );
 
+  // Live tan narx / foyda preview — mirrors reports/views.py's cos_per_unit
+  // formula exactly, so what you see here while editing the recipe matches
+  // what "Tan narxni yangilash" + the Tan narxi report will show after saving.
+  // No more redoing this by hand on a calculator for every recipe tweak.
+  const preview = useMemo(() => {
+    const meshok = parseFloat(meshokSize) || 0;
+    const communalNum = parseFloat(communal) || 0;
+    const otherNum = parseFloat(other) || 0;
+    const salaryNum = parseFloat(salary) || 0;
+    const sellPrice = parseFloat(defaultUzs) || 0;
+
+    let ingTotal = 0;
+    let hasMissingPrice = false;
+    for (const l of validLines) {
+      const ing = ingredients?.results.find((i) => i.id === l.ingredient);
+      const qty = parseFloat(l.amount_per_meshok) || 0;
+      const price = parseFloat(ing?.avg_cost_uzs ?? "0") || 0;
+      if (price === 0 && qty > 0) hasMissingPrice = true;
+      ingTotal += qty * price;
+    }
+
+    const costPerUnit =
+      meshok > 0 ? (ingTotal + communalNum + otherNum) / meshok + salaryNum : 0;
+    const marginPerUnit = sellPrice - costPerUnit;
+    const marginPct = sellPrice > 0 ? (marginPerUnit / sellPrice) * 100 : 0;
+
+    return { costPerUnit, marginPerUnit, marginPct, hasMissingPrice, meshok };
+  }, [validLines, ingredients, meshokSize, communal, other, salary, defaultUzs]);
+
   const save = useMutation({
     mutationFn: async () => {
       if (isEdit) {
@@ -527,6 +557,56 @@ function ProductModal({
                 );
               })}
             </div>
+          </div>
+
+          <div className="rounded-xl border bg-muted/30 p-3 sm:p-4">
+            <h3 className="font-semibold text-sm mb-2">Tan narx / Foyda — jonli hisob</h3>
+            {preview.meshok <= 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Hisoblash uchun "Meshok hajmi" ni kiriting.
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Tan narx (1 dona)</div>
+                    <div className="text-lg font-semibold tabular-nums">
+                      {formatMoney(preview.costPerUnit, "UZS")}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Foyda (1 dona)</div>
+                    <div
+                      className={`text-lg font-semibold tabular-nums ${
+                        preview.marginPerUnit < 0 ? "text-destructive" : "text-emerald-600"
+                      }`}
+                    >
+                      {formatMoney(preview.marginPerUnit, "UZS")}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Foyda %</div>
+                    <div
+                      className={`text-lg font-semibold tabular-nums ${
+                        preview.marginPerUnit < 0 ? "text-destructive" : "text-emerald-600"
+                      }`}
+                    >
+                      {preview.marginPct.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Retsept, meshok, kommunal, boshqa yoki narxni o'zgartirsangiz — shu yerda
+                  darhol yangilanadi. Saqlagach "Tan narxni yangilash" tugmasi ro'yxatdagi
+                  qiymatni ham yangilaydi.
+                </p>
+                {preview.hasMissingPrice && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    ⚠ Ba'zi xomashyoning narxi kiritilmagan — tan narx kamroq chiqmoqda.
+                  </p>
+                )}
+              </>
+            )}
           </div>
         </div>
         {save.isError && (
