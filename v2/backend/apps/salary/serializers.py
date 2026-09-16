@@ -56,22 +56,9 @@ class UserProductRateSerializer(serializers.ModelSerializer):
             "rate_per_meshok_uzs", "note",
             "created_at",
         ]
+        # DRF derives a unique-together validator from the model constraint, so a
+        # repeated (user, product) already comes back as a 400, not a 500.
         read_only_fields = ["created_at"]
-
-    def validate(self, attrs):
-        """Keep one rate per (user, product) — re-saving an existing pair updates
-        it instead of 500ing on the unique constraint."""
-        user = attrs.get("user") or getattr(self.instance, "user", None)
-        product = attrs.get("product") or getattr(self.instance, "product", None)
-        if user and product:
-            clash = UserProductRate.objects.filter(user=user, product=product)
-            if self.instance:
-                clash = clash.exclude(pk=self.instance.pk)
-            if clash.exists():
-                raise serializers.ValidationError(
-                    {"product": "Bu ishchi uchun bu mahsulot tarifi allaqachon mavjud."}
-                )
-        return attrs
 
 
 class SalaryPaymentSerializer(UsdRateMixin, serializers.ModelSerializer):

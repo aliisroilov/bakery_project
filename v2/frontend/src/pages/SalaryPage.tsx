@@ -9,6 +9,8 @@ import {
   Plus,
   Receipt,
   Settings2,
+  Trash2,
+  TriangleAlert,
   Users,
   Wallet,
   TrendingUp,
@@ -18,7 +20,7 @@ import {
 } from "recharts";
 import { api } from "../lib/api";
 import { C, TICK, mkTooltip } from "../lib/chart";
-import type { KassaAccount, Paginated } from "../lib/types";
+import type { KassaAccount, Paginated, Product } from "../lib/types";
 import { DEFAULT_USD_RATE, formatMoney, fmtDate, fmtDMY, nowTashkentStr, tashkentToISO } from "../lib/utils";
 import { useModalHotkeys, usePageHotkeys } from "../lib/hotkeys";
 
@@ -66,6 +68,22 @@ interface EmployeeRate {
   }[];
 }
 
+/** One product this worker makes, and THEIR OWN money for it (per qop). */
+interface UserProductRate {
+  id: number;
+  product_id: number;
+  product_name: string;
+  rate_per_meshok_uzs: string;
+  meshok_size: string;
+}
+
+/** A product they produced but have no rate for — those qop currently earn 0. */
+interface MissingProductRate {
+  product_id: number;
+  product_name: string;
+  meshok: string;
+}
+
 interface EmployeeSummary {
   user_id: number;
   display_name: string;
@@ -73,6 +91,9 @@ interface EmployeeSummary {
   role: string;
   produced_product_name: string | null;
   rate: EmployeeRate | null;
+  // Only populated for rate_type="per_product".
+  product_rates: UserProductRate[];
+  missing_product_rates: MissingProductRate[];
   earned_period: string;    // salary accrued within the selected date range
   // Payments made within the selected date range
   paid_salary: string;
@@ -526,15 +547,54 @@ function EmployeeCard({
         {employee.rate ? (
           <>
             Tarif: <span className="text-foreground font-medium">{employee.rate.rate_type_display}</span>
-            {" · "}
-            <span className="text-foreground">
-              {formatMoney(employee.rate.rate, employee.rate.currency)}
-            </span>
+            {/* per_product has no single amount — the money is per product below. */}
+            {employee.rate.rate_type !== "per_product" && (
+              <>
+                {" · "}
+                <span className="text-foreground">
+                  {formatMoney(employee.rate.rate, employee.rate.currency)}
+                </span>
+              </>
+            )}
           </>
         ) : (
           <span className="italic">Tarif belgilanmagan</span>
         )}
       </div>
+
+      {employee.rate?.rate_type === "per_product" && (
+        <div className="text-xs space-y-1">
+          {employee.product_rates.length > 0 ? (
+            <ul className="space-y-0.5">
+              {employee.product_rates.map((r) => (
+                <li key={r.id} className="flex justify-between gap-3 tabular-nums">
+                  <span className="text-muted-foreground truncate">{r.product_name}</span>
+                  <span className="text-foreground shrink-0">
+                    {formatMoney(r.rate_per_meshok_uzs, "UZS")}
+                    <span className="text-muted-foreground"> / qop</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="italic text-muted-foreground">
+              Mahsulot tariflari kiritilmagan
+            </div>
+          )}
+          {employee.missing_product_rates.length > 0 && (
+            <div className="flex gap-1.5 rounded-lg bg-amber-500/10 text-amber-800 dark:text-amber-300 px-2 py-1.5">
+              <TriangleAlert className="size-3.5 shrink-0 mt-px" />
+              <span>
+                Tarifsiz:{" "}
+                {employee.missing_product_rates
+                  .map((m) => `${m.product_name} (${m.meshok} qop)`)
+                  .join(", ")}{" "}
+                — 0 so'm hisoblanmoqda.
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-2 text-xs">
         <div className="rounded-lg bg-muted/40 p-2">
@@ -870,6 +930,160 @@ function PaymentModal({
   );
 }
 
+/** One editable line in the per-product rate list. `id` is the saved row's id
+ * (undefined = a new line the user just added). */
+interface RateRow {
+  key: number;
+  id?: number;
+  product: string;   // product id as a string (select value)
+  perMeshok: string; // this worker's own money for 1 qop of that product
+}
+
+let rowKeySeq = 0;
+
+/**
+ * "Qaysi mahsulotlarni ishlab chiqaradi va necha pul oladi" — the worker's own
+ * rate for each product they make. Qop and dona are linked through the product's
+ * meshok_size (same paired-input idea as the product modal); qop is what gets
+ * stored, because production is recorded in qop.
+ */
+function ProductRatesEditor({
+  rows,
+  setRows,
+  products,
+  missing,
+}: {
+  rows: RateRow[];
+  setRows: (r: RateRow[]) => void;
+  products: Product[];
+  missing: MissingProductRate[];
+}) {
+  const meshokSizeOf = (productId: string) =>
+    parseFloat(products.find((p) => String(p.id) === productId)?.meshok_size ?? "0") || 0;
+
+  const update = (key: number, patch: Partial<RateRow>) =>
+    setRows(rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  // A product already priced on another line can't be picked twice — one rate
+  // per worker per product.
+  const taken = (key: number) =>
+    new Set(rows.filter((r) => r.key !== key && r.product).map((r) => r.product));
+
+  const stillMissing = missing.filter(
+    (m) => !rows.some((r) => r.product === String(m.product_id)),
+  );
+
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3 space-y-3">
+      <div>
+        <div className="text-sm font-medium">
+          Qaysi mahsulotlarni ishlab chiqaradi va necha pul oladi
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Har bir mahsulot uchun <b>shu ishchining o'z tarifi</b>. Bir xil mahsulotni
+          ishlaganda ham usta va yordamchi har xil olishi mumkin.
+        </p>
+      </div>
+
+      {stillMissing.length > 0 && (
+        <div className="rounded-lg bg-amber-500/10 text-amber-800 dark:text-amber-300 px-3 py-2 text-xs flex gap-2">
+          <TriangleAlert className="size-4 shrink-0 mt-px" />
+          <div>
+            Tarifi qo'yilmagan mahsulotlar uchun <b>0 so'm</b> hisoblanmoqda:{" "}
+            {stillMissing
+              .map((m) => `${m.product_name} (${m.meshok} qop)`)
+              .join(", ")}
+            . Ularni ham qo'shing.
+          </div>
+        </div>
+      )}
+
+      {rows.length === 0 && (
+        <div className="text-xs text-muted-foreground">
+          Hali mahsulot qo'shilmagan — ishlab chiqarilgan qop uchun 0 so'm hisoblanadi.
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {rows.map((row) => {
+          const meshok = meshokSizeOf(row.product);
+          const perUnit =
+            meshok > 0 && row.perMeshok !== ""
+              ? String(Math.round(((parseFloat(row.perMeshok) || 0) / meshok) * 100) / 100)
+              : "";
+          const used = taken(row.key);
+          return (
+            <div key={row.key} className="flex flex-wrap items-end gap-2">
+              <div className="min-w-[8rem] flex-1">
+                <label className="block text-[11px] text-muted-foreground mb-1">Mahsulot</label>
+                <select
+                  value={row.product}
+                  onChange={(e) => update(row.key, { product: e.target.value })}
+                  className="w-full h-10 rounded-lg border bg-background px-2 text-sm"
+                >
+                  <option value="">— tanlang —</option>
+                  {products
+                    .filter((p) => !used.has(String(p.id)))
+                    .map((p) => (
+                      <option key={p.id} value={String(p.id)}>
+                        {p.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div className="w-28">
+                <label className="block text-[11px] text-muted-foreground mb-1">1 qop uchun</label>
+                <input
+                  className="w-full h-10 rounded-lg border bg-background px-2 text-sm tabular-nums"
+                  value={row.perMeshok}
+                  onChange={(e) => update(row.key, { perMeshok: e.target.value })}
+                  inputMode="decimal"
+                  placeholder="0"
+                />
+              </div>
+              <div className="w-28">
+                <label className="block text-[11px] text-muted-foreground mb-1">1 dona uchun</label>
+                <input
+                  className="w-full h-10 rounded-lg border bg-background px-2 text-sm tabular-nums"
+                  value={perUnit}
+                  onChange={(e) => {
+                    if (meshok > 0)
+                      update(row.key, {
+                        perMeshok: String((parseFloat(e.target.value) || 0) * meshok),
+                      });
+                  }}
+                  disabled={meshok <= 0}
+                  inputMode="decimal"
+                  placeholder="0"
+                  title="Qop va dona bog'langan — birini kiritsangiz, ikkinchisi meshok hajmiga qarab o'zi hisoblanadi"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setRows(rows.filter((r) => r.key !== row.key))}
+                className="h-10 w-10 grid place-items-center rounded-lg border text-muted-foreground hover:text-destructive hover:bg-muted"
+                title="O'chirish"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={() =>
+          setRows([...rows, { key: ++rowKeySeq, product: "", perMeshok: "" }])
+        }
+        className="h-9 px-3 rounded-lg border text-sm hover:bg-muted inline-flex items-center gap-1.5"
+      >
+        <Plus className="size-4" /> Mahsulot qo'shish
+      </button>
+    </div>
+  );
+}
+
 function RateModal({
   onClose,
   employee,
@@ -893,6 +1107,22 @@ function RateModal({
   );
   const [note, setNote] = useState(existing?.note ?? "");
   const today = new Date().toISOString().slice(0, 10);
+
+  // ── Per-product setup (rate_type="per_product") ────────────────────────────
+  const [productRows, setProductRows] = useState<RateRow[]>(() =>
+    (employee.product_rates ?? []).map((r) => ({
+      key: ++rowKeySeq,
+      id: r.id,
+      product: String(r.product_id),
+      perMeshok: String(parseFloat(r.rate_per_meshok_uzs)),
+    })),
+  );
+  const { data: productList } = useQuery<Paginated<Product>>({
+    queryKey: ["products", "for-rates"],
+    queryFn: async () =>
+      (await api.get<Paginated<Product>>("/products/?archived=false")).data,
+    enabled: rateType === "per_product",
+  });
   // Date a CHANGED rate takes effect (past periods keep their old rate).
   const [effectiveFrom, setEffectiveFrom] = useState(today);
 
@@ -905,8 +1135,36 @@ function RateModal({
       currency !== existing.currency ||
       (weekStartDay === "" ? null : Number(weekStartDay)) !== existing.week_start_day);
 
+  /** Persist the per-product lines: drop removed ones, update changed ones,
+   * create new ones. Skips empty lines (no product picked yet). */
+  const saveProductRates = async () => {
+    const rows = productRows.filter((r) => r.product !== "");
+    const before = employee.product_rates ?? [];
+
+    const removed = before.filter((b) => !rows.some((r) => r.id === b.id));
+    for (const b of removed) {
+      await api.delete(`/salary/user-product-rates/${b.id}/`);
+    }
+    for (const r of rows) {
+      const body = {
+        user: employee.user_id,
+        product: Number(r.product),
+        rate_per_meshok_uzs: r.perMeshok === "" ? "0" : r.perMeshok,
+      };
+      const prev = before.find((b) => b.id === r.id);
+      if (prev) {
+        const unchanged =
+          String(prev.product_id) === r.product &&
+          parseFloat(prev.rate_per_meshok_uzs) === parseFloat(body.rate_per_meshok_uzs);
+        if (!unchanged) await api.patch(`/salary/user-product-rates/${r.id}/`, body);
+      } else {
+        await api.post("/salary/user-product-rates/", body);
+      }
+    }
+  };
+
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const payload = {
         user: employee.user_id,
         rate_type: rateType,
@@ -918,10 +1176,11 @@ function RateModal({
         note,
         effective_from: effectiveFrom,
       };
-      if (existing) {
-        return api.patch(`/salary/rates/${existing.id}/`, payload);
-      }
-      return api.post("/salary/rates/", payload);
+      const res = existing
+        ? await api.patch(`/salary/rates/${existing.id}/`, payload)
+        : await api.post("/salary/rates/", payload);
+      if (rateType === "per_product") await saveProductRates();
+      return res;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["salary"] });
@@ -959,27 +1218,37 @@ function RateModal({
               ))}
             </select>
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label={rateType === "per_product" ? "Tarif (ishlatilmaydi)" : "Tarif (miqdor)"}>
-              <input
-                className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
-                value={rate}
-                onChange={(e) => setRate(e.target.value)}
-                inputMode="decimal"
-                disabled={rateType === "per_product"}
-              />
-            </Field>
-            <Field label="Valyuta">
-              <select
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value as "UZS" | "USD")}
-                className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
-              >
-                <option value="UZS">UZS</option>
-                <option value="USD">USD</option>
-              </select>
-            </Field>
-          </div>
+          {/* per_product has no single tariff — each product has its own amount
+              in the list below, so only the currency selector is relevant. */}
+          {rateType === "per_product" ? (
+            <ProductRatesEditor
+              rows={productRows}
+              setRows={setProductRows}
+              products={productList?.results ?? []}
+              missing={employee.missing_product_rates ?? []}
+            />
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Tarif (miqdor)">
+                <input
+                  className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                  inputMode="decimal"
+                />
+              </Field>
+              <Field label="Valyuta">
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as "UZS" | "USD")}
+                  className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+                >
+                  <option value="UZS">UZS</option>
+                  <option value="USD">USD</option>
+                </select>
+              </Field>
+            </div>
+          )}
           {rateChanged && (
             <Field label="Yangi tarif amaldan boshlab">
               <input
@@ -1033,8 +1302,8 @@ function RateModal({
           </Field>
           {rateType === "per_product" && (
             <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-2">
-              Bu turda har bir mahsulot uchun tarif mahsulot sahifasidan
-              (production_salary_per_unit_uzs) olinadi.
+              Guruh bilan ishlaganda ham qop soni bo'linmaydi — har bir a'zoga to'liq
+              qop yoziladi va har kim o'z tarifi bo'yicha oladi.
             </div>
           )}
           <Field label="Izoh">
@@ -1106,7 +1375,8 @@ interface ProductionDay {
     product_name: string;
     meshok: string;
     units: string;
-    salary_per_unit: string;
+    // This worker's own qop rate for the product; null = no rate configured.
+    rate_per_meshok: string | null;
   }[];
 }
 
@@ -1286,18 +1556,20 @@ function HistoryDrawer({
                           <span className="tabular-nums">
                             {p.meshok} qop · {p.units} dona
                             {employee.rate?.rate_type === "per_product" &&
-                              parseFloat(p.salary_per_unit) > 0 && (
+                              (p.rate_per_meshok !== null ? (
                                 <span className="ml-2 text-bakery-600">
                                   ≈{" "}
                                   {formatMoney(
                                     String(
-                                      parseFloat(p.units) *
-                                        parseFloat(p.salary_per_unit),
+                                      parseFloat(p.meshok) *
+                                        parseFloat(p.rate_per_meshok),
                                     ),
                                     "UZS",
                                   )}
                                 </span>
-                              )}
+                              ) : (
+                                <span className="ml-2 text-amber-600">tarif yo'q · 0</span>
+                              ))}
                           </span>
                         </div>
                       ))}
