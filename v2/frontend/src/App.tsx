@@ -9,6 +9,7 @@ import { ShopDetailPage } from "./pages/ShopDetailPage";
 import { RegionsPage } from "./pages/RegionsPage";
 import { RegionDetailPage } from "./pages/RegionDetailPage";
 import { ProductsPage } from "./pages/ProductsPage";
+import { CalculatorPage } from "./pages/CalculatorPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { OrderDetailPage } from "./pages/OrderDetailPage";
 import { KassaPage } from "./pages/KassaPage";
@@ -52,6 +53,7 @@ export default function App() {
       <Route path="/regions" element={<Protected><RegionsPage /></Protected>} />
       <Route path="/regions/:id" element={<Protected><RegionDetailPage /></Protected>} />
       <Route path="/products" element={<Protected><ProductsPage /></Protected>} />
+      <Route path="/calculator" element={<Protected><CalculatorPage /></Protected>} />
       <Route path="/finance" element={<Protected><KassaPage /></Protected>} />
       <Route path="/inventory" element={<Protected><InventoryPage /></Protected>} />
       <Route path="/production" element={<Protected><ProductionPage /></Protected>} />

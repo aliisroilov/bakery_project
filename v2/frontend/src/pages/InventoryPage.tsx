@@ -598,7 +598,17 @@ export function PurchaseModal({
   const [accountId, setAccountId] = useState<number | "">(existing?.account ?? "");
   const [currency, setCurrency] = useState<"UZS" | "USD">(existing?.currency ?? "UZS");
   const [quantity, setQuantity] = useState(existing ? String(parseFloat(existing.quantity)) : "");
-  const [unitPrice, setUnitPrice] = useState(existing ? String(parseFloat(existing.unit_price)) : "");
+  // Miqdor = 0 xaridlarda "Narx" maydoni birlik narxi emas, balki kassadan
+  // to'g'ridan-to'g'ri ayiriladigan umumiy summani bildiradi (pastdagi
+  // totalPrice hisobiga qarang). Backend bunday holatda unit_price ni har doim
+  // 0 saqlaydi, shu sababli mavjud yozuvni tahrirlashda boshlang'ich qiymatni
+  // saqlangan total_price dan olamiz, unit_price dan emas.
+  const existingQtyIsZero = existing ? parseFloat(existing.quantity) === 0 : false;
+  const [unitPrice, setUnitPrice] = useState(
+    existing
+      ? String(parseFloat(existingQtyIsZero ? existing.total_price : existing.unit_price))
+      : "",
+  );
   // Kurs (UZS per 1 USD) — a dollar purchase is paid from the kassa in dollars
   // but reported in so'm, so the rate it was bought at travels with the row.
   const [rate, setRate] = useState(
@@ -615,9 +625,13 @@ export function PurchaseModal({
   const unitNum = parseFloat(unitPrice) || 0;
   const isUsd = currency === "USD";
   const rateNum = parseFloat(rate) || 0;
-  // Compute unconditionally so a 0-qty purchase still sends total_price (0.00) —
-  // lets you register an ingredient in inventory without buying stock yet.
-  const totalPrice = (qtyNum * unitNum).toFixed(2);
+  // Miqdor > 0: odatiy xarid — summa = miqdor x narx.
+  // Miqdor = 0: faqat kassadan pul yechish uchun ishlatiladi (masalan, tuzatish
+  // yoki avvaldan to'lov) — ombordagi miqdor va retsept narxiga tegmaydi, lekin
+  // "Narx" maydoniga kiritilgan summa to'g'ridan-to'g'ri kassadan ayiriladi
+  // (miqdorga ko'paytirilmaydi, aks holda har doim 0 bo'lib qolar edi).
+  const totalPrice = qtyNum > 0 ? (qtyNum * unitNum).toFixed(2) : unitNum.toFixed(2);
+  const isCashOnlyEntry = qtyNum === 0;
 
   const selectedIng = ingredients.find((i) => i.id === ingredientId);
   const unitShort = selectedIng?.unit_short ?? "";
@@ -726,7 +740,13 @@ export function PurchaseModal({
                 inputMode="decimal"
               />
             </Field>
-            <Field label={`Narx${unitShort ? ` (1 ${unitShort} uchun)` : " (1 birlik uchun)"}`}>
+            <Field
+              label={
+                isCashOnlyEntry
+                  ? "Summa (kassadan yechiladi)"
+                  : `Narx${unitShort ? ` (1 ${unitShort} uchun)` : " (1 birlik uchun)"}`
+              }
+            >
               <input
                 className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
                 value={unitPrice}
@@ -735,6 +755,13 @@ export function PurchaseModal({
               />
             </Field>
           </div>
+          {isCashOnlyEntry && (
+            <p className="text-xs text-muted-foreground -mt-1">
+              Miqdor 0: bu yozuv faqat kiritilgan summani kassadan ayiradi —
+              ombordagi zaxira va retsept tannarxiga ta'sir qilmaydi (masalan,
+              naqd tuzatish/avans uchun).
+            </p>
+          )}
           {isUsd && (
             <Field label="Kurs (1 USD = ? UZS)">
               <input
@@ -746,10 +773,10 @@ export function PurchaseModal({
               />
             </Field>
           )}
-          {qtyNum > 0 && unitNum > 0 && (
+          {unitNum > 0 && (
             <div className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground space-y-1">
               <div className="flex justify-between">
-                <span>Umumiy summa ({currency}):</span>
+                <span>{isCashOnlyEntry ? `Kassadan yechiladigan summa (${currency}):` : `Umumiy summa (${currency}):`}</span>
                 <span className="font-semibold text-foreground tabular-nums">
                   {Number(totalPrice).toLocaleString()}
                 </span>
