@@ -1,12 +1,14 @@
 """Salary auto-calculation — v2 port of v1's calculate_auto_salary with per-user linkage.
 
-Production-based salary credits BOTH:
-  - individual productions (Production.nonvoy == user), counted in full, and
-  - group productions (a group the user belongs to), ALSO counted in full.
+Production-based salary credits ALL of:
+  - individual productions (Production.nonvoy == user), counted in full,
+  - group productions (a named group the user belongs to), ALSO counted in full,
+  - ad-hoc productions (the user was ticked directly into Production.individuals
+    at entry time, with no pre-made group), ALSO counted in full.
 
-The quantity is never split among group members — each member earns their own
-salary tariff on the whole batch, because the per-member rate already encodes
-their role/pay level (e.g. master baker vs helper).
+The quantity is never split among the people on a batch — each of them earns
+their own salary tariff on the whole batch, because the per-member rate already
+encodes their role/pay level (e.g. master baker vs helper).
 
 Rate types per_meshok / per_unit price every product the same. per_product
 prices each product at THIS worker's own rate for it (UserProductRate), so a
@@ -64,11 +66,13 @@ def _parse_date(d) -> date | None:
 def _production_contributions(user, d_from=None, d_to=None, reset_date=None):
     """Yield (meshok, units, product) credited to *user*.
 
-    Both individual productions (nonvoy=user) AND group productions (a group the
-    user belongs to) count the FULL quantity for this user. The qop/dona is NOT
-    split among group members — every member earns their own salary tariff on the
-    whole batch, because the rate already encodes each person's role/pay level
-    (e.g. a master baker on 130 000/qop vs a helper on 20 000/qop).
+    Individual productions (nonvoy=user), group productions (a named group the
+    user belongs to) AND ad-hoc productions (the user was ticked into that run's
+    individuals list) all count the FULL quantity for this user. The qop/dona is
+    NOT split among the people on the batch — every one of them earns their own
+    salary tariff on the whole batch, because the rate already encodes each
+    person's role/pay level (e.g. a master baker on 130 000/qop vs a helper on
+    20 000/qop).
 
     *reset_date* is a hard lower bound: production before it is never counted
     (period close / fresh start), so historical runs don't resurface as salary.
@@ -80,26 +84,39 @@ def _production_contributions(user, d_from=None, d_to=None, reset_date=None):
     if reset_date and (d_from is None or reset_date > d_from):
         d_from = reset_date
 
-    # A run is credited either individually (nonvoy) or to a group — never both.
-    # Guarding the group query with nonvoy__isnull=True makes the two sets disjoint
-    # even if a legacy row accidentally has both set, so nobody is paid twice.
+    # A run is credited exactly once: individually (nonvoy), to a group, or to an
+    # ad-hoc set of bakers. Guarding the group query with nonvoy__isnull=True and
+    # the ad-hoc query with both isnull=True keeps the three sets disjoint even if
+    # a legacy row accidentally has more than one set, so nobody is paid twice.
     individual = Production.objects.filter(nonvoy=user).select_related("product")
     group = (
         Production.objects.filter(group__members=user, nonvoy__isnull=True)
         .select_related("product", "group")
     )
+    ad_hoc = (
+        Production.objects.filter(
+            individuals=user, nonvoy__isnull=True, group__isnull=True
+        )
+        .select_related("product")
+    )
     if d_from:
         individual = individual.filter(occurred_at__date__gte=d_from)
         group = group.filter(occurred_at__date__gte=d_from)
+        ad_hoc = ad_hoc.filter(occurred_at__date__gte=d_from)
     if d_to:
         individual = individual.filter(occurred_at__date__lte=d_to)
         group = group.filter(occurred_at__date__lte=d_to)
+        ad_hoc = ad_hoc.filter(occurred_at__date__lte=d_to)
 
     for p in individual:
         yield Decimal(p.meshok_count or 0), Decimal(p.unit_count or 0), p.product
 
     for p in group:
         # Full quantity — no division by member count.
+        yield Decimal(p.meshok_count or 0), Decimal(p.unit_count or 0), p.product
+
+    for p in ad_hoc:
+        # Same rule as a group: full quantity for every baker ticked on the run.
         yield Decimal(p.meshok_count or 0), Decimal(p.unit_count or 0), p.product
 
 
@@ -118,7 +135,8 @@ def user_product_rate_map(user) -> dict:
 
 
 def _earned_from_production(user, rate_type, rate, d_from=None, d_to=None, reset_date=None) -> Decimal:
-    """Sum a user's production-based earnings (individual + group, full quantity)."""
+    """Sum a user's production-based earnings (individual + group + ad-hoc crew,
+    full quantity on every one of them)."""
     from .models import RateType
 
     # PER_PRODUCT is priced per qop from the worker's own rate table. A product
@@ -361,7 +379,7 @@ def calculate_earned(user, rate_obj) -> Decimal:
     timeline = _rate_timeline(user, rate_obj)
     rt = rate_obj.rate_type
 
-    # ── Production-based rates (individual + group share) ──────────────────────
+    # ── Production-based rates (individual + group + ad-hoc crew share) ────────
     if rt in PRODUCTION_TYPES:
         return _earned_production_piecewise(user, timeline, reset, today)
 

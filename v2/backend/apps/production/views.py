@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -25,12 +25,19 @@ class ProductionViewSet(viewsets.ModelViewSet):
     ordering_fields = ["occurred_at", "meshok_count"]
 
     def get_queryset(self):
-        qs = Production.objects.select_related("product", "nonvoy", "group")
+        qs = (
+            Production.objects
+            .select_related("product", "nonvoy", "group")
+            .prefetch_related("individuals")
+        )
         p = self.request.query_params
         if product := p.get("product"):
             qs = qs.filter(product_id=product)
         if nonvoy := p.get("nonvoy"):
-            qs = qs.filter(nonvoy_id=nonvoy)
+            # A baker's runs are the ones booked to them alone PLUS the ad-hoc
+            # crews they were ticked into — the same set their salary is built
+            # from, so the list can't disagree with the payroll figure.
+            qs = qs.filter(Q(nonvoy_id=nonvoy) | Q(individuals__id=nonvoy)).distinct()
         if group := p.get("group"):
             qs = qs.filter(group_id=group)
         if date_from := p.get("date_from"):

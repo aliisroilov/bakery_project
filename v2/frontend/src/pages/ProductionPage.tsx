@@ -17,6 +17,9 @@ interface Production {
   nonvoy_name: string;
   group: number | null;
   group_name: string;
+  /** Ad-hoc crew — bakers ticked directly on the entry form (no saved group). */
+  individuals: number[];
+  individuals_display: { id: number; display_name: string }[];
   actor_name: string;
   meshok_count: string;
   unit_count: string;
@@ -72,10 +75,33 @@ function memberEarned(rate: SalaryRate | null | undefined, meshok: number, units
 }
 
 /**
+ * Per-person breakdown for a batch made by several bakers: each one earns their
+ * OWN rate on the FULL qop/dona (never a split share) — matching the backend.
+ */
+function crewRows(
+  members: { id: number; display_name: string }[],
+  rateByUserId: Record<number, SalaryRate | null>,
+  meshok: number,
+  units: number,
+) {
+  let total = 0;
+  let currency: "UZS" | "USD" = "UZS";
+  const rows = members.map((m) => {
+    const rate = rateByUserId[m.id];
+    if (rate) currency = rate.currency as "UZS" | "USD";
+    const amount = memberEarned(rate, meshok, units);
+    total += amount;
+    return { name: m.display_name, amount, hasRate: !!rate };
+  });
+  return { rows, total, currency, memberCount: members.length };
+}
+
+/**
  * Total salary a production entry generates.
  * - Individual (nonvoy): the baker's full earning.
- * - Group: each member earns their OWN rate on the FULL qop/dona (no split),
- *   summed into the total labour cost of the batch — matching the backend.
+ * - Group, or an ad-hoc crew picked at entry time: each person earns their OWN
+ *   rate on the FULL qop/dona (no split), summed into the total labour cost of
+ *   the batch — matching the backend.
  * Returns null when no rate info applies (e.g. all members on time-based rates).
  */
 function entryEarned(
@@ -92,21 +118,12 @@ function entryEarned(
     return v > 0 ? { total: v, currency: (rate?.currency as "UZS" | "USD") ?? "UZS" } : null;
   }
 
-  if (p.group) {
-    const g = groupById[p.group];
-    const members = g?.members_display ?? [];
-    if (members.length === 0) return null;
-    let total = 0;
-    let currency: "UZS" | "USD" = "UZS";
-    for (const m of members) {
-      const rate = rateByUserId[m.id];
-      if (rate) currency = rate.currency as "UZS" | "USD";
-      total += memberEarned(rate, meshok, units);
-    }
-    return total > 0 ? { total, currency } : null;
-  }
-
-  return null;
+  const members = p.group
+    ? groupById[p.group]?.members_display ?? []
+    : p.individuals_display ?? [];
+  if (members.length === 0) return null;
+  const { total, currency } = crewRows(members, rateByUserId, meshok, units);
+  return total > 0 ? { total, currency } : null;
 }
 
 function ProductionTrendChart({ productions }: { productions: Production[] }) {
@@ -311,11 +328,12 @@ function ProductionModal({
   const isEdit = !!prod;
 
   const [productId, setProductId] = useState<number | "">(prod?.product ?? "");
-  const [actorType, setActorType] = useState<"nonvoy" | "group">(
-    prod?.group ? "group" : "nonvoy"
+  const [actorType, setActorType] = useState<"nonvoy" | "individuals" | "group">(
+    prod?.group ? "group" : (prod?.individuals?.length ? "individuals" : "nonvoy")
   );
   const [nonvoyId, setNonvoyId] = useState<number | "">(prod?.nonvoy ?? "");
   const [groupId, setGroupId] = useState<number | "">(prod?.group ?? "");
+  const [individualIds, setIndividualIds] = useState<number[]>(prod?.individuals ?? []);
   const [meshokCount, setMeshokCount] = useState(prod?.meshok_count ?? "");
   const [unitCount, setUnitCount] = useState(prod?.unit_count ?? "");
   const [occurredAt, setOccurredAt] = useState(
@@ -360,27 +378,26 @@ function ProductionModal({
       (await api.get<Paginated<EmployeeGroup>>("/users/groups/")).data,
   });
 
-  // Per-member group salary preview — each member earns their OWN rate on the
+  // Per-member salary preview for a batch made by several bakers — a saved group
+  // or an ad-hoc crew ticked right here. Each of them earns their OWN rate on the
   // FULL qop/dona (no split), mirroring the backend.
   const groupPreview = useMemo(() => {
-    if (actorType !== "group" || !groupId || !meshokCount) return null;
-    const g = groups?.results.find((x) => x.id === groupId);
-    const members = g?.members_display ?? [];
+    if (!meshokCount) return null;
+    let members: { id: number; display_name: string }[] = [];
+    if (actorType === "group") {
+      if (!groupId) return null;
+      members = groups?.results.find((x) => x.id === groupId)?.members_display ?? [];
+    } else if (actorType === "individuals") {
+      members = (nonvoys?.results ?? []).filter((u) => individualIds.includes(u.id));
+    } else {
+      return null;
+    }
     if (members.length === 0) return null;
     const meshok = parseFloat(meshokCount);
     const units = parseFloat(unitCount || "0");
     if (!isFinite(meshok) || meshok <= 0) return null;
-    let total = 0;
-    let currency: "UZS" | "USD" = "UZS";
-    const rows = members.map((m) => {
-      const rate = rateByUserId[m.id];
-      if (rate) currency = rate.currency as "UZS" | "USD";
-      const amount = memberEarned(rate, meshok, units);
-      total += amount;
-      return { name: m.display_name, amount, hasRate: !!rate };
-    });
-    return { rows, total, currency, memberCount: members.length };
-  }, [actorType, groupId, groups, meshokCount, unitCount, rateByUserId]);
+    return crewRows(members, rateByUserId, meshok, units);
+  }, [actorType, groupId, groups, nonvoys, individualIds, meshokCount, unitCount, rateByUserId]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -394,6 +411,7 @@ function ProductionModal({
         note,
         nonvoy: actorType === "nonvoy" ? (nonvoyId || null) : null,
         group: actorType === "group" ? (groupId || null) : null,
+        individuals: actorType === "individuals" ? individualIds : [],
       };
       if (isEdit) {
         return api.patch(`/production/${prod!.id}/`, payload);
@@ -411,7 +429,11 @@ function ProductionModal({
   // In edit mode, allow saving even if nonvoy/group is null (legacy V1 records)
   const actorOk = isEdit
     ? true
-    : actorType === "nonvoy" ? !!nonvoyId : !!groupId;
+    : actorType === "nonvoy"
+      ? !!nonvoyId
+      : actorType === "individuals"
+        ? individualIds.length > 0
+        : !!groupId;
   const canSave =
     productId &&
     parseFloat(String(meshokCount)) > 0 &&
@@ -447,11 +469,11 @@ function ProductionModal({
 
           <div>
             <label className="block text-xs text-muted-foreground mb-1">Kim ishlab chiqardi</label>
-            <div className="flex gap-2 mb-2">
+            <div className="grid grid-cols-3 gap-2 mb-2">
               <button
                 type="button"
                 onClick={() => setActorType("nonvoy")}
-                className={`flex-1 h-9 rounded-lg border text-sm transition-colors ${
+                className={`h-9 rounded-lg border text-xs sm:text-sm px-1 transition-colors ${
                   actorType === "nonvoy"
                     ? "bg-bakery-500 text-white border-bakery-500"
                     : "hover:bg-muted"
@@ -461,8 +483,19 @@ function ProductionModal({
               </button>
               <button
                 type="button"
+                onClick={() => setActorType("individuals")}
+                className={`h-9 rounded-lg border text-xs sm:text-sm px-1 transition-colors ${
+                  actorType === "individuals"
+                    ? "bg-bakery-500 text-white border-bakery-500"
+                    : "hover:bg-muted"
+                }`}
+              >
+                Bir nechta nonvoy
+              </button>
+              <button
+                type="button"
                 onClick={() => setActorType("group")}
-                className={`flex-1 h-9 rounded-lg border text-sm transition-colors ${
+                className={`h-9 rounded-lg border text-xs sm:text-sm px-1 transition-colors ${
                   actorType === "group"
                     ? "bg-bakery-500 text-white border-bakery-500"
                     : "hover:bg-muted"
@@ -484,6 +517,38 @@ function ProductionModal({
                   </option>
                 ))}
               </select>
+            ) : actorType === "individuals" ? (
+              /* Ad-hoc crew — tick any bakers, no saved group needed. Everyone
+                 ticked is paid their own tariff on the full batch. */
+              <div className="rounded-lg border divide-y max-h-52 overflow-y-auto">
+                {(nonvoys?.results.length ?? 0) === 0 && (
+                  <p className="px-3 py-3 text-sm text-muted-foreground">Nonvoy yo'q</p>
+                )}
+                {nonvoys?.results.map((u) => {
+                  const checked = individualIds.includes(u.id);
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-muted/50"
+                    >
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-bakery-500"
+                        checked={checked}
+                        onChange={() =>
+                          setIndividualIds((prev) =>
+                            checked ? prev.filter((id) => id !== u.id) : [...prev, u.id],
+                          )
+                        }
+                      />
+                      <span className="truncate">{u.display_name}</span>
+                      {!rateByUserId[u.id] && (
+                        <span className="ml-auto text-xs text-amber-500 shrink-0">stavka yo'q</span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
             ) : (
               <select
                 value={groupId}
@@ -499,6 +564,13 @@ function ProductionModal({
                   </option>
                 ))}
               </select>
+            )}
+            {actorType === "individuals" && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {individualIds.length > 0
+                  ? `${individualIds.length} nonvoy tanlandi — har biri o'z stavkasi bo'yicha to'liq qop uchun maosh oladi.`
+                  : "Ishtirok etgan nonvoylarni belgilang (guruh yaratish shart emas)."}
+              </p>
             )}
           </div>
 
@@ -543,7 +615,8 @@ function ProductionModal({
             <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-3 py-2 text-sm">
               <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-medium">
                 <Banknote className="size-4 text-emerald-600 shrink-0" />
-                Guruh maoshi (jami): <strong>{formatMoney(String(groupPreview.total), groupPreview.currency)}</strong>
+                {actorType === "individuals" ? "Tanlanganlar maoshi" : "Guruh maoshi"} (jami):{" "}
+                <strong>{formatMoney(String(groupPreview.total), groupPreview.currency)}</strong>
                 <span className="text-xs opacity-70">(har a'zo o'z stavkasi bo'yicha to'liq qop uchun, {groupPreview.memberCount} a'zo)</span>
               </div>
               <ul className="mt-1.5 space-y-0.5 text-xs text-emerald-700/80 dark:text-emerald-400/80">

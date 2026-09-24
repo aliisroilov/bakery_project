@@ -17,9 +17,10 @@ from apps.core.models import TimestampedModel
 
 class Production(TimestampedModel):
     """
-    One production run — a nonvoy (or group) produced N qop of a product.
+    One production run — a nonvoy, a group, or a hand-picked set of nonvoys
+    produced N qop of a product.
 
-    - nonvoy OR group must be set (one is required, not both).
+    - Exactly ONE attribution is used: nonvoy OR group OR individuals.
     - unit_count is entered MANUALLY — actual yield varies (e.g. 160-165 per qop).
     - Stock is bumped by unit_count when the record is saved.
     """
@@ -44,6 +45,16 @@ class Production(TimestampedModel):
         null=True,
         blank=True,
     )
+    # Ad-hoc crew — several bakers picked directly on the production form, without
+    # having to pre-create a named EmployeeGroup first. Paid exactly like a group:
+    # every selected worker earns their OWN tariff on the FULL qop/dona, never a
+    # split share (see apps/salary/utils.py).
+    individuals = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name="ad_hoc_productions",
+        limit_choices_to={"role": "nonvoy"},
+    )
     # Quantity in "meshok" / qop (batch count).
     meshok_count = models.DecimalField(
         max_digits=QTY_MAX_DIGITS, decimal_places=QTY_DECIMAL_PLACES
@@ -61,11 +72,31 @@ class Production(TimestampedModel):
             models.Index(fields=["product", "-occurred_at"]),
             models.Index(fields=["nonvoy", "-occurred_at"]),
         ]
+    def has_individuals(self) -> bool:
+        """Whether an ad-hoc crew is attached.
+
+        Django writes M2M rows only AFTER the instance is saved, so on an unsaved
+        row the selection isn't queryable yet — a form can hand it over ahead of
+        time via `_pending_individuals` (see ProductionAdminForm). The API path
+        never needs this: the serializer validates the submitted list itself.
+        """
+        pending = getattr(self, "_pending_individuals", None)
+        if pending is not None:
+            return bool(pending)
+        return bool(self.pk) and self.individuals.exists()
+
     def clean(self):
-        if not self.nonvoy_id and not self.group_id:
-            raise ValidationError("Either nonvoy or group must be set.")
-        if self.nonvoy_id and self.group_id:
-            raise ValidationError("Cannot set both nonvoy and group.")
+        # Exactly one attribution — otherwise a baker could be credited twice
+        # (individually AND as a crew member) for the same batch.
+        chosen = [bool(self.nonvoy_id), bool(self.group_id), self.has_individuals()]
+        if sum(chosen) > 1:
+            raise ValidationError(
+                "Only one of nonvoy, group or individuals may be set."
+            )
+        if not any(chosen):
+            raise ValidationError(
+                "Either nonvoy, group or individuals must be set."
+            )
 
     @property
     def actor_name(self) -> str:
@@ -73,6 +104,10 @@ class Production(TimestampedModel):
             return self.nonvoy.display_name
         if self.group_id:
             return self.group.name
+        if self.pk:
+            names = [u.display_name for u in self.individuals.all()]
+            if names:
+                return ", ".join(names)
         return "—"
 
     def __str__(self) -> str:

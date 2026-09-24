@@ -117,7 +117,13 @@ def build_payments(date_from=None, date_to=None):
 
 
 def build_production(date_from=None, date_to=None, product=None, products=None):
-    qs = Production.objects.select_related("product", "nonvoy", "group").order_by("-occurred_at")
+    qs = (
+        Production.objects
+        .select_related("product", "nonvoy", "group")
+        # actor_name lists the whole ad-hoc crew for individuals-attributed runs.
+        .prefetch_related("individuals")
+        .order_by("-occurred_at")
+    )
     if date_from:
         qs = qs.filter(occurred_at__date__gte=date_from)
     if date_to:
@@ -380,11 +386,13 @@ def _build_labour_map(days: int = 90) -> dict:
                            (UserProductRate), 0 when they have none configured
       - group run        → sum of each member's production wage (every member
                            earns their full tariff on the batch)
+      - ad-hoc crew run  → same as a group run, summed over the bakers ticked on
+                           that run; identical crews count as one producer
       - time-based (per_week / fixed_monthly) bakers contribute 0 to unit COS
         (their pay is period overhead, not per-meshok direct labour)
 
-    Runs with no baker AND no group are skipped (unknown labour). A product with
-    no attributed runs in the window is absent from the map, and
+    Runs with no baker, no group AND no ad-hoc crew are skipped (unknown labour).
+    A product with no attributed runs in the window is absent from the map, and
     _compute_product_cos falls back to the per-product manual rate.
     """
     from datetime import timedelta
@@ -413,17 +421,28 @@ def _build_labour_map(days: int = 90) -> dict:
         return 0.0  # time-based rates are not per-meshok direct labour
 
     cutoff = timezone.localdate() - timedelta(days=days)
+    # run id → [user ids ticked on it], for individuals-attributed runs. Read from
+    # the M2M through table in one query — .values() above can't span an M2M.
+    adhoc_members: dict = {}
+    for run_id, uid in (
+        Production.individuals.through.objects
+        .filter(production__occurred_at__date__gte=cutoff)
+        .values_list("production_id", "user_id")
+    ):
+        adhoc_members.setdefault(run_id, []).append(uid)
+
     # product_id → { producer_key: [labour_sum, meshok_sum] }
     by_producer: dict = {}
     runs = (
         Production.objects
         .filter(occurred_at__date__gte=cutoff)
-        .values("product_id", "nonvoy_id", "group_id", "meshok_count", "unit_count")
+        .values("id", "product_id", "nonvoy_id", "group_id", "meshok_count", "unit_count")
     )
     for r in runs:
         pid_run = r["product_id"]
         meshok = float(r["meshok_count"] or 0)
         units = float(r["unit_count"] or 0)
+        crew = adhoc_members.get(r["id"])
         if r["nonvoy_id"] and r["nonvoy_id"] in rates:
             key = ("n", r["nonvoy_id"])
             rt, rate = rates[r["nonvoy_id"]]
@@ -433,6 +452,15 @@ def _build_labour_map(days: int = 90) -> dict:
             labour = sum(
                 _unit_labour(uid, pid_run, *rates[uid], meshok, units)
                 for uid in group_members.get(r["group_id"], [])
+                if uid in rates
+            )
+        elif crew:
+            # The crew itself is the producer — keyed by its exact membership, so
+            # the same set of bakers accumulates as one producer across runs.
+            key = ("a", tuple(sorted(crew)))
+            labour = sum(
+                _unit_labour(uid, pid_run, *rates[uid], meshok, units)
+                for uid in crew
                 if uid in rates
             )
         else:

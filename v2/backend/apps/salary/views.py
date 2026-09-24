@@ -256,19 +256,26 @@ class ProductionBreakdownView(APIView):
             else {}
         )
 
-        # Both individual and group productions count the FULL quantity for this
-        # user — matching the salary calculation (no split among group members).
+        # Individual, group AND ad-hoc-crew productions all count the FULL
+        # quantity for this user — matching the salary calculation (no split
+        # among the people on the batch). The isnull guards keep the three
+        # querysets disjoint, exactly like _production_contributions does.
         individual = Production.objects.filter(nonvoy_id=user_id).select_related("product")
         group_qs = Production.objects.filter(
             group__members__id=user_id, nonvoy__isnull=True
         ).select_related("product", "group")
+        adhoc_qs = Production.objects.filter(
+            individuals__id=user_id, nonvoy__isnull=True, group__isnull=True
+        ).select_related("product")
         if reset:
             individual = individual.filter(occurred_at__date__gte=reset)
             group_qs = group_qs.filter(occurred_at__date__gte=reset)
+            adhoc_qs = adhoc_qs.filter(occurred_at__date__gte=reset)
         individual = list(individual.order_by("-occurred_at"))
         group_prods = list(group_qs.order_by("-occurred_at"))
+        adhoc_prods = list(adhoc_qs.order_by("-occurred_at"))
 
-        rows = [p for p in individual] + [p for p in group_prods]
+        rows = [p for p in individual] + [p for p in group_prods] + [p for p in adhoc_prods]
 
         by_date: dict[str, dict] = {}
         for p in rows:
