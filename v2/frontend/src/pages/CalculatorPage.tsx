@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Calculator, Plus, Trash2, RotateCcw } from "lucide-react";
+import { api } from "../lib/api";
+import type { Paginated } from "../lib/types";
 import { formatMoney } from "../lib/utils";
 
 /**
@@ -16,15 +19,29 @@ import { formatMoney } from "../lib/utils";
  * "Mahsulotlar" bo'limidagi "Yangi mahsulot" dan foydalaning.
  */
 
+interface Ingredient {
+  id: number;
+  name: string;
+  unit_short: string;
+  avg_cost_uzs: string;
+}
+
+// "Boshqa" (Ali, 2026-09-29): the calculator is a standalone scratch-pad that
+// never writes to the real Xomashyo/inventory tables (see the page docstring
+// below), so a brand-new raw material typed here stays local to this one
+// calculation — it does NOT create a real Ingredient row.
+const CUSTOM = "custom" as const;
+
 interface IngredientLine {
   key: string;
-  name: string;
+  ingredientId: number | "" | typeof CUSTOM;
+  name: string; // free-text name, only used when ingredientId === CUSTOM
   quantity: string;
   price: string;
 }
 
 function newLine(): IngredientLine {
-  return { key: crypto.randomUUID(), name: "", quantity: "", price: "" };
+  return { key: crypto.randomUUID(), ingredientId: "", name: "", quantity: "", price: "" };
 }
 
 export function CalculatorPage() {
@@ -32,11 +49,31 @@ export function CalculatorPage() {
   const [salePrice, setSalePrice] = useState("");
   const [volume, setVolume] = useState("");
 
+  const { data: ingredients } = useQuery<Paginated<Ingredient>>({
+    queryKey: ["inventory", "ingredients", "for-calculator"],
+    queryFn: async () =>
+      (await api.get<Paginated<Ingredient>>("/inventory/ingredients/?archived=false")).data,
+  });
+
   const addLine = () => setLines((ls) => [...ls, newLine()]);
   const removeLine = (key: string) =>
     setLines((ls) => (ls.length > 1 ? ls.filter((l) => l.key !== key) : ls));
   const updateLine = (key: string, patch: Partial<IngredientLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  // Picking a real ingredient pre-fills its known average cost (still
+  // editable — this calculation may want a different price than the last
+  // purchase). Picking "Boshqa" clears the price and switches the row to a
+  // free-text name input instead of the dropdown.
+  const selectIngredient = (key: string, value: string) => {
+    if (value === CUSTOM) {
+      updateLine(key, { ingredientId: CUSTOM, name: "", price: "" });
+      return;
+    }
+    const id = value ? Number(value) : "";
+    const ing = ingredients?.results.find((i) => i.id === id);
+    updateLine(key, { ingredientId: id, name: "", price: ing ? ing.avg_cost_uzs : "" });
+  };
 
   const resetAll = () => {
     setLines([newLine(), newLine()]);
@@ -50,7 +87,11 @@ export function CalculatorPage() {
     const rows = lines.map((l) => {
       const qty = parseFloat(l.quantity) || 0;
       const price = parseFloat(l.price) || 0;
-      return { ...l, qty, price, subtotal: qty * price };
+      const ing = typeof l.ingredientId === "number"
+        ? ingredients?.results.find((i) => i.id === l.ingredientId)
+        : undefined;
+      const displayName = l.ingredientId === CUSTOM ? l.name : ing?.name ?? "";
+      return { ...l, qty, price, subtotal: qty * price, ing, displayName };
     });
     const costPerUnit = rows.reduce((sum, r) => sum + r.subtotal, 0);
 
@@ -64,7 +105,7 @@ export function CalculatorPage() {
     const marginPct = sale > 0 ? (marginPerUnit / sale) * 100 : 0;
 
     return { rows, costPerUnit, totalRevenue, totalCost, totalProfit, marginPerUnit, marginPct, sale, vol };
-  }, [lines, salePrice, volume]);
+  }, [lines, salePrice, volume, ingredients]);
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -120,12 +161,29 @@ export function CalculatorPage() {
               {result.rows.map((l) => (
                 <tr key={l.key}>
                   <td className="py-1.5 pr-2">
-                    <input
-                      value={l.name}
-                      onChange={(e) => updateLine(l.key, { name: e.target.value })}
-                      placeholder="Masalan: Un"
-                      className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
-                    />
+                    {l.ingredientId === CUSTOM ? (
+                      <input
+                        value={l.name}
+                        onChange={(e) => updateLine(l.key, { name: e.target.value })}
+                        placeholder="Yangi xomashyo nomi"
+                        autoFocus
+                        className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+                      />
+                    ) : (
+                      <select
+                        value={l.ingredientId}
+                        onChange={(e) => selectIngredient(l.key, e.target.value)}
+                        className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+                      >
+                        <option value="">Xomashyo tanlang…</option>
+                        {ingredients?.results.map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {i.name} ({i.unit_short})
+                          </option>
+                        ))}
+                        <option value={CUSTOM}>+ Boshqa (yangi nom yozish)</option>
+                      </select>
+                    )}
                   </td>
                   <td className="py-1.5 pr-2">
                     <input
@@ -169,12 +227,29 @@ export function CalculatorPage() {
           {result.rows.map((l) => (
             <div key={l.key} className="rounded-lg border p-2.5 space-y-2">
               <div className="flex items-center gap-2">
-                <input
-                  value={l.name}
-                  onChange={(e) => updateLine(l.key, { name: e.target.value })}
-                  placeholder="Xomashyo nomi"
-                  className="flex-1 h-10 rounded-lg border bg-background px-3 text-sm"
-                />
+                {l.ingredientId === CUSTOM ? (
+                  <input
+                    value={l.name}
+                    onChange={(e) => updateLine(l.key, { name: e.target.value })}
+                    placeholder="Yangi xomashyo nomi"
+                    autoFocus
+                    className="flex-1 h-10 rounded-lg border bg-background px-3 text-sm"
+                  />
+                ) : (
+                  <select
+                    value={l.ingredientId}
+                    onChange={(e) => selectIngredient(l.key, e.target.value)}
+                    className="flex-1 h-10 rounded-lg border bg-background px-3 text-sm"
+                  >
+                    <option value="">Xomashyo tanlang…</option>
+                    {ingredients?.results.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.name} ({i.unit_short})
+                      </option>
+                    ))}
+                    <option value={CUSTOM}>+ Boshqa (yangi nom yozish)</option>
+                  </select>
+                )}
                 <button
                   type="button"
                   onClick={() => removeLine(l.key)}

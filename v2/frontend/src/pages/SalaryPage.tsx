@@ -708,10 +708,14 @@ function PaymentModal({
   );
   const [kind, setKind] = useState<Kind>("salary");
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
-  // Start empty and let the operator type the amount actually being paid.
-  // (We deliberately do NOT prefill the full outstanding balance — it can now be
-  // very large, e.g. carried debt of 100M+, and a stray Enter would post it.)
-  const [amount, setAmount] = useState("");
+  // Prefilled with the employee's current outstanding balance (Ali, 2026-09-29
+  // — clicking the pay icon should write the exact qoldiq in automatically).
+  // Still a plain editable text field, so the operator can change it before
+  // submitting; only prefilled when there's a real positive debt to preselect.
+  const preselectRemaining = preselectUser ? parseFloat(preselectUser.remaining || "0") : 0;
+  const [amount, setAmount] = useState(
+    preselectRemaining > 0 ? String(preselectRemaining) : "",
+  );
   // Kurs (UZS per 1 USD) — nonvoy pay folds into Tan narxi in the UZS P&L, so a
   // dollar payout carries the rate it was made at.
   const [rate, setRate] = useState(String(DEFAULT_USD_RATE));
