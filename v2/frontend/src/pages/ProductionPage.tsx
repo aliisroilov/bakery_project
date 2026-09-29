@@ -49,12 +49,21 @@ interface EmployeeGroup {
   note: string;
 }
 
+interface UserProductRate {
+  id: number;
+  product_id: number;
+  product_name: string;
+  rate_per_meshok_uzs: string;
+  meshok_size: string;
+}
+
 interface SalaryRate {
   id: number;
   rate_type: string;
   rate_type_display: string;
   rate: string;
   currency: string;
+  product_rates?: UserProductRate[];
 }
 
 const RATE_TYPE_SHORT: Record<string, string> = {
@@ -65,12 +74,27 @@ const RATE_TYPE_SHORT: Record<string, string> = {
   fixed_monthly: "oylik qat'iy",
 };
 
-/** Earned for one member given their rate and the qop/dona credited to them. */
-function memberEarned(rate: SalaryRate | null | undefined, meshok: number, units: number): number {
+/** Earned for one member given their rate and the qop/dona credited to them.
+ *
+ * per_product ignores `rate.rate` entirely (that field is meaningless for this
+ * type — see the backend's SalaryRate.rate docstring) and instead looks up the
+ * worker's OWN per-product rate for the specific product being produced, same
+ * as the backend's user_product_rate_map(). Returns 0 (not shown) when the
+ * worker has no rate configured for that product yet.
+ */
+function memberEarned(
+  rate: SalaryRate | null | undefined,
+  meshok: number,
+  units: number,
+  productId?: number,
+): number {
   if (!rate) return 0;
-  const r = parseFloat(rate.rate);
-  if (rate.rate_type === "per_meshok") return meshok * r;
-  if (rate.rate_type === "per_unit") return units * r;
+  if (rate.rate_type === "per_meshok") return meshok * parseFloat(rate.rate);
+  if (rate.rate_type === "per_unit") return units * parseFloat(rate.rate);
+  if (rate.rate_type === "per_product" && productId != null) {
+    const pr = rate.product_rates?.find((r) => r.product_id === productId);
+    return pr ? meshok * parseFloat(pr.rate_per_meshok_uzs) : 0;
+  }
   return 0;
 }
 
@@ -83,13 +107,14 @@ function crewRows(
   rateByUserId: Record<number, SalaryRate | null>,
   meshok: number,
   units: number,
+  productId?: number,
 ) {
   let total = 0;
   let currency: "UZS" | "USD" = "UZS";
   const rows = members.map((m) => {
     const rate = rateByUserId[m.id];
     if (rate) currency = rate.currency as "UZS" | "USD";
-    const amount = memberEarned(rate, meshok, units);
+    const amount = memberEarned(rate, meshok, units, productId);
     total += amount;
     return { name: m.display_name, amount, hasRate: !!rate };
   });
@@ -114,7 +139,7 @@ function entryEarned(
 
   if (p.nonvoy) {
     const rate = rateByUserId[p.nonvoy];
-    const v = memberEarned(rate, meshok, units);
+    const v = memberEarned(rate, meshok, units, p.product);
     return v > 0 ? { total: v, currency: (rate?.currency as "UZS" | "USD") ?? "UZS" } : null;
   }
 
@@ -122,7 +147,7 @@ function entryEarned(
     ? groupById[p.group]?.members_display ?? []
     : p.individuals_display ?? [];
   if (members.length === 0) return null;
-  const { total, currency } = crewRows(members, rateByUserId, meshok, units);
+  const { total, currency } = crewRows(members, rateByUserId, meshok, units, p.product);
   return total > 0 ? { total, currency } : null;
 }
 
@@ -174,7 +199,9 @@ export function ProductionPage() {
       (await api.get<Paginated<Production>>("/production/?page_size=200")).data,
   });
 
-  const { data: salarySummary } = useQuery<{ results: { user_id: number; rate: SalaryRate | null }[] }>({
+  const { data: salarySummary } = useQuery<{
+    results: { user_id: number; rate: SalaryRate | null; product_rates?: UserProductRate[] }[];
+  }>({
     queryKey: ["salary", "summary"],
     queryFn: async () =>
       (await api.get("/salary/employees/?role=nonvoy")).data,
@@ -183,7 +210,9 @@ export function ProductionPage() {
   const rateByUserId = useMemo(() => {
     const map: Record<number, SalaryRate | null> = {};
     for (const emp of salarySummary?.results ?? []) {
-      map[emp.user_id] = emp.rate;
+      // product_rates rides alongside `rate` in the API response, not nested
+      // inside it — merge it in here so memberEarned() has one object to read.
+      map[emp.user_id] = emp.rate ? { ...emp.rate, product_rates: emp.product_rates } : emp.rate;
     }
     return map;
   }, [salarySummary]);
@@ -396,8 +425,8 @@ function ProductionModal({
     const meshok = parseFloat(meshokCount);
     const units = parseFloat(unitCount || "0");
     if (!isFinite(meshok) || meshok <= 0) return null;
-    return crewRows(members, rateByUserId, meshok, units);
-  }, [actorType, groupId, groups, nonvoys, individualIds, meshokCount, unitCount, rateByUserId]);
+    return crewRows(members, rateByUserId, meshok, units, productId || undefined);
+  }, [actorType, groupId, groups, nonvoys, individualIds, meshokCount, unitCount, rateByUserId, productId]);
 
   const save = useMutation({
     mutationFn: () => {
