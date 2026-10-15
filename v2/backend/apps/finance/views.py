@@ -139,7 +139,14 @@ def _apply_payment_to_kassa(payment: Payment):
         amount=payment.amount,
         reference_model="finance.Payment",
         reference_id=payment.id,
-        note=f"Kirim · {payment.shop.name}",
+        # A discount carries no cash, so a discount-only payment lands in the
+        # kassa as a 0 row. Say so in the note, otherwise the ledger shows an
+        # unexplained "Kirim · shop · 0".
+        note=(
+            f"Skidka · {payment.shop.name}"
+            if payment.amount == 0 and payment.discount > 0
+            else f"Kirim · {payment.shop.name}"
+        ),
         occurred_at=payment.received_at,
         created_by=payment.collected_by,
     )
@@ -234,6 +241,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 currency=payment.currency,
                 amount=payment.amount,
                 occurred_at=payment.received_at,
+                # Keep the Skidka/Kirim wording in step with the edited amounts.
+                note=(
+                    f"Skidka · {payment.shop.name}"
+                    if payment.amount == 0 and payment.discount > 0
+                    else f"Kirim · {payment.shop.name}"
+                ),
             )
 
     def perform_destroy(self, instance):

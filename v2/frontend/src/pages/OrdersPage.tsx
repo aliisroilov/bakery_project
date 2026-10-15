@@ -341,6 +341,7 @@ function NewOrderModal({
 
   // Inline payment ("Pul oldingizmi?") for delivered/partial orders.
   const [payAmount, setPayAmount] = useState("");
+  const [payDiscount, setPayDiscount] = useState("");
   const [payAccountId, setPayAccountId] = useState<number | "">("");
 
   const isDelivering = orderStatus === "delivered" || orderStatus === "partial";
@@ -432,6 +433,22 @@ function NewOrderModal({
     return sum + price * qty;
   }, 0);
 
+  // What the shop actually owes for this order: the backend charges delivered
+  // units only (OrderItem.delivered_price), so a partial order is invoiced on
+  // the per-item delivered column, not the ordered quantity.
+  const deliveredTotal = validLines.reduce((sum, line) => {
+    const price = parseFloat(line.unit_price) || 0;
+    const qty =
+      Number("delivered_quantity" in line ? line.delivered_quantity : line.quantity) || 0;
+    return sum + price * qty;
+  }, 0);
+
+  const payAmountNum = parseFloat(payAmount) || 0;
+  const payDiscountNum = parseFloat(payDiscount) || 0;
+  const settled = payAmountNum + payDiscountNum;
+  const remainingDebt = deliveredTotal - settled;
+
+
   const create = useMutation({
     mutationFn: async () => {
       const res = await api.post<{ id: number }>("/orders/", {
@@ -445,18 +462,21 @@ function NewOrderModal({
         note,
         items: validLines,
       });
-      // Record the received cash inline (same as the old payment popup) when a
-      // delivered/partial order was paid for at handover.
-      const amt = parseFloat(payAmount);
-      if (isDelivering && payAccountId !== "" && amt > 0) {
+      // Record the received cash and/or the discount inline (same as the driver
+      // handover form) when a delivered/partial order was settled at handover.
+      // A discount alone is a valid posting: it carries no cash but still closes
+      // that much of the shop's debt (Payment.closes_loan_by = amount + discount).
+      if (isDelivering && payAccountId !== "" && settled > 0) {
         await api.post("/finance/payments/", {
           shop: Number(shop),
           order: res.data.id,
           account: payAccountId,
           currency,
-          amount: payAmount,
-          discount: "0",
-          note: `Buyurtma #${res.data.id} to'lovi`,
+          amount: payAmount || "0",
+          discount: payDiscount || "0",
+          note: payDiscountNum > 0
+            ? `Buyurtma #${res.data.id} to'lovi · skidka ${formatMoney(payDiscount, currency)}`
+            : `Buyurtma #${res.data.id} to'lovi`,
           received_at: tashkentToISO(`${orderDate}T${nowTashkentStr().slice(11, 16)}`),
           payment_type: "collection",
         });
@@ -472,7 +492,13 @@ function NewOrderModal({
     },
   });
 
-  const canSave = shop !== "" && validLines.length > 0 && !create.isPending;
+  // A typed-in payment or discount must have a kassa, otherwise saving would
+  // drop it silently and the shop's debt would stay wrong.
+  const canSave =
+    shop !== "" &&
+    validLines.length > 0 &&
+    !create.isPending &&
+    !(isDelivering && settled > 0 && payAccountId === "");
 
   return (
     <div
@@ -533,7 +559,16 @@ function NewOrderModal({
             <Field label="Holati">
               <select
                 value={orderStatus}
-                onChange={(e) => setOrderStatus(e.target.value as OrderStatus)}
+                onChange={(e) => {
+                  const next = e.target.value as OrderStatus;
+                  setOrderStatus(next);
+                  // Leaving delivered/partial hides the cash+discount block, so
+                  // clear it — a hidden value must never be posted on save.
+                  if (next !== "delivered" && next !== "partial") {
+                    setPayAmount("");
+                    setPayDiscount("");
+                  }
+                }}
                 className="w-full h-10 px-3 rounded-lg border bg-background text-sm"
               >
                 <option value="pending">Kutilmoqda</option>
@@ -671,14 +706,23 @@ function NewOrderModal({
             <div className="rounded-xl border bg-background p-3 space-y-3">
               <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                 <Banknote className="size-4 text-muted-foreground" />
-                Pul oldingizmi? (ixtiyoriy)
+                Pul oldingizmi / skidka? (ixtiyoriy)
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <Field label={`Olingan summa (${currency})`}>
                   <input
                     className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="0"
+                  />
+                </Field>
+                <Field label={`Skidka (${currency})`}>
+                  <input
+                    className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                    value={payDiscount}
+                    onChange={(e) => setPayDiscount(e.target.value)}
                     inputMode="decimal"
                     placeholder="0"
                   />
@@ -696,10 +740,61 @@ function NewOrderModal({
                   </select>
                 </Field>
               </div>
+              {deliveredTotal > 0 && (
+                <div className="rounded-lg bg-muted/40 px-3 py-2 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Yetkazilgan summa</span>
+                    <span className="tabular-nums font-medium">
+                      {formatMoney(deliveredTotal.toString(), currency)}
+                    </span>
+                  </div>
+                  {payDiscountNum > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Skidka</span>
+                      <span className="tabular-nums text-sky-600">
+                        − {formatMoney(payDiscountNum.toString(), currency)}
+                      </span>
+                    </div>
+                  )}
+                  {payAmountNum > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Naqd olindi</span>
+                      <span className="tabular-nums text-emerald-600">
+                        − {formatMoney(payAmountNum.toString(), currency)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-t pt-1 font-semibold">
+                    <span>{remainingDebt < 0 ? "Avans qoladi" : "Qarz qoladi"}</span>
+                    <span
+                      className={`tabular-nums ${
+                        remainingDebt < 0
+                          ? "text-sky-600"
+                          : remainingDebt === 0
+                            ? "text-emerald-600"
+                            : ""
+                      }`}
+                    >
+                      {formatMoney(Math.abs(remainingDebt).toString(), currency)}
+                    </span>
+                  </div>
+                </div>
+              )}
+              {remainingDebt < 0 && (
+                <p className="text-xs text-amber-600">
+                  Naqd + skidka yetkazilgan summadan ko'p — do'konda avans (minus qarz) qoladi.
+                </p>
+              )}
+              {settled > 0 && payAccountId === "" && (
+                <p className="text-xs text-destructive">
+                  Kassani tanlang — aks holda to'lov va skidka yozilmaydi.
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 {orderStatus === "partial"
                   ? "Yetkazilgan miqdorni har bir mahsulot uchun yuqorida kiriting. Bo'sh qolsa, to'liq yetkazilgan deb hisoblanadi."
-                  : "Barcha mahsulotlar to'liq yetkazilgan deb belgilanadi."}
+                  : "Barcha mahsulotlar to'liq yetkazilgan deb belgilanadi."}{" "}
+                Skidka naqd pulsiz ham yoziladi — do'kon qarzini shuncha kamaytiradi.
               </p>
             </div>
           )}
