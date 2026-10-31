@@ -166,11 +166,9 @@ class ShopViewSet(viewsets.ModelViewSet):
         )
         for r in oi:
             daily[r["order__order_date"]]["delivered"] += float(r["v"] or 0)
-        # Payments per day (debt reduced by amount + discount). A direct sale
-        # (buyurtmasiz sotuv) never touched the debt, so it is left out.
+        # Payments per day (debt reduced by amount + discount).
         pay = (
             Payment.objects.filter(shop=shop, currency="UZS")
-            .exclude(payment_type="direct_sale")
             .annotate(d=TruncDate("received_at"))
             .values("d")
             .annotate(a=Sum("amount"), disc=Sum("discount"))

@@ -1821,7 +1821,7 @@ function KirimModal({
   const [amount, setAmount] = useState("");
   const [discount, setDiscount] = useState("0");
   // Goods sold for cash with no order (e.g. Baranki): the money is the sale —
-  // it goes into Savdo and leaves the shop's debt alone.
+  // it goes into Savdo and, like any kirim, cuts the shop's debt.
   const [directSale, setDirectSale] = useState(false);
   // UZS per 1 USD. Shops are invoiced in so'm, so a dollar kirim closes their
   // debt at this rate; the cash itself stays USD in the kassa.
@@ -1947,7 +1947,7 @@ function KirimModal({
               <b>Buyurtmasiz sotuv</b>
               <span className="block text-xs text-muted-foreground">
                 Mahsulot buyurtma qilinmasdan sotilgan (masalan Baranki): summa Hisobotlardagi
-                Savdoga qo'shiladi, do'kon qarzi o'zgarmaydi.
+                Savdoga qo'shiladi va oddiy kirim kabi do'kon qarzidan ayiriladi.
               </span>
             </span>
           </label>
@@ -1971,7 +1971,7 @@ function KirimModal({
                       </span>
                     </div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">
-                      {directSale ? "Savdoga shuncha so'm qo'shiladi." : "Do'kon qarzidan shuncha so'm ayiriladi."}{" "}
+                      {directSale ? "Savdoga qo'shiladi va do'kon qarzidan ayiriladi." : "Do'kon qarzidan shuncha so'm ayiriladi."}{" "}
                       Naqd pul kassada USD bo'lib qoladi — so'mga o'tkazish uchun Konvertatsiya.
                     </div>
                   </>
