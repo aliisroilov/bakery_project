@@ -22,6 +22,7 @@ from .models import (
     KassaTransactionType,
     KassaTransfer,
     Payment,
+    PaymentType,
 )
 from .serializers import (
     CashHandoverSerializer,
@@ -122,6 +123,17 @@ def _apply_payment_to_shop_balance(payment: Payment):
     _move_shop_balance(payment.shop_id, cur, delta, -1)
 
 
+def _kassa_note(payment: Payment) -> str:
+    """Ledger text for a kirim. A discount carries no cash, so a discount-only
+    payment lands as a 0 row — say so, otherwise the ledger shows an
+    unexplained "Kirim · shop · 0". A direct sale says it is a sale."""
+    if payment.payment_type == PaymentType.DIRECT_SALE:
+        return f"Buyurtmasiz sotuv · {payment.shop.name}"
+    if payment.amount == 0 and payment.discount > 0:
+        return f"Skidka · {payment.shop.name}"
+    return f"Kirim · {payment.shop.name}"
+
+
 def _apply_payment_to_kassa(payment: Payment):
     """Log the cash into the kassa account — append-only + update cached balance."""
     account = KassaAccount.objects.select_for_update().get(pk=payment.account_id)
@@ -133,20 +145,13 @@ def _apply_payment_to_kassa(payment: Payment):
     KassaTransaction.objects.create(
         account=payment.account,
         kind=KassaTransactionType.PAYMENT_IN
-        if payment.payment_type == "collection"
+        if payment.payment_type in (PaymentType.COLLECTION, PaymentType.DIRECT_SALE)
         else KassaTransactionType.LOAN_REPAYMENT,
         currency=payment.currency,
         amount=payment.amount,
         reference_model="finance.Payment",
         reference_id=payment.id,
-        # A discount carries no cash, so a discount-only payment lands in the
-        # kassa as a 0 row. Say so in the note, otherwise the ledger shows an
-        # unexplained "Kirim · shop · 0".
-        note=(
-            f"Skidka · {payment.shop.name}"
-            if payment.amount == 0 and payment.discount > 0
-            else f"Kirim · {payment.shop.name}"
-        ),
+        note=_kassa_note(payment),
         occurred_at=payment.received_at,
         created_by=payment.collected_by,
     )
@@ -241,12 +246,8 @@ class PaymentViewSet(viewsets.ModelViewSet):
                 currency=payment.currency,
                 amount=payment.amount,
                 occurred_at=payment.received_at,
-                # Keep the Skidka/Kirim wording in step with the edited amounts.
-                note=(
-                    f"Skidka · {payment.shop.name}"
-                    if payment.amount == 0 and payment.discount > 0
-                    else f"Kirim · {payment.shop.name}"
-                ),
+                # Keep the ledger wording in step with the edited payment.
+                note=_kassa_note(payment),
             )
 
     def perform_destroy(self, instance):

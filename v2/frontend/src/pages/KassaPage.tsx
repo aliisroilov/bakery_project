@@ -1820,6 +1820,9 @@ function KirimModal({
   const [currency, setCurrency] = useState<"UZS" | "USD">("UZS");
   const [amount, setAmount] = useState("");
   const [discount, setDiscount] = useState("0");
+  // Goods sold for cash with no order (e.g. Baranki): the money is the sale —
+  // it goes into Savdo and leaves the shop's debt alone.
+  const [directSale, setDirectSale] = useState(false);
   // UZS per 1 USD. Shops are invoiced in so'm, so a dollar kirim closes their
   // debt at this rate; the cash itself stays USD in the kassa.
   const [rate, setRate] = useState(String(DEFAULT_USD_RATE));
@@ -1847,14 +1850,14 @@ function KirimModal({
         account: accountId,
         currency,
         amount,
-        discount,
+        discount: directSale ? "0" : discount,
         exchange_rate: isUsd ? rate : "0",
         order_date: orderDate,
         note,
         // Record the kirim on the chosen date (with the current wall-clock time
         // in Tashkent) instead of always using today.
         received_at: tashkentToISO(`${orderDate}T${nowTashkentStr().slice(11, 16)}`),
-        payment_type: "collection",
+        payment_type: directSale ? "direct_sale" : "collection",
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["kassa"] });
@@ -1922,15 +1925,32 @@ function KirimModal({
                 inputMode="decimal"
               />
             </Field>
-            <Field label="Skidka / bonus">
-              <input
-                className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
-                value={discount}
-                onChange={(e) => setDiscount(e.target.value)}
-                inputMode="decimal"
-              />
-            </Field>
+            {!directSale && (
+              <Field label="Skidka / bonus">
+                <input
+                  className="w-full h-10 rounded-lg border bg-background px-3 text-sm tabular-nums"
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  inputMode="decimal"
+                />
+              </Field>
+            )}
           </div>
+          <label className="flex items-start gap-2 text-sm cursor-pointer rounded-lg border px-3 py-2">
+            <input
+              type="checkbox"
+              checked={directSale}
+              onChange={(e) => setDirectSale(e.target.checked)}
+              className="mt-0.5 rounded"
+            />
+            <span>
+              <b>Buyurtmasiz sotuv</b>
+              <span className="block text-xs text-muted-foreground">
+                Mahsulot buyurtma qilinmasdan sotilgan (masalan Baranki): summa Hisobotlardagi
+                Savdoga qo'shiladi, do'kon qarzi o'zgarmaydi.
+              </span>
+            </span>
+          </label>
           {isUsd && (
             <>
               <Field label="Kurs (1 USD = ? UZS)">
@@ -1951,8 +1971,8 @@ function KirimModal({
                       </span>
                     </div>
                     <div className="text-[11px] text-muted-foreground mt-0.5">
-                      Do'kon qarzidan shuncha so'm ayiriladi. Naqd pul kassada USD
-                      bo'lib qoladi — so'mga o'tkazish uchun Konvertatsiya.
+                      {directSale ? "Savdoga shuncha so'm qo'shiladi." : "Do'kon qarzidan shuncha so'm ayiriladi."}{" "}
+                      Naqd pul kassada USD bo'lib qoladi — so'mga o'tkazish uchun Konvertatsiya.
                     </div>
                   </>
                 ) : (

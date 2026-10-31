@@ -946,6 +946,7 @@ function GrossDailyTab() {
           )}
 
           <p className="text-xs text-muted-foreground">
+            {pnl.direct_sales > 0 && `Savdoga buyurtmasiz sotuv ham qo'shilgan: ${formatMoney(String(Math.round(pnl.direct_sales)), "UZS")} · `}
             Tan narxi = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + nonvoy ish haqi · Harajatlar = Rizoxon, Bahodir (Op. foydadan keyin).
           </p>
 
@@ -1260,6 +1261,8 @@ function PnlDetailModal({
                   Savdo, xomashyo/kommunal/boshqa — faqat shu mahsulotniki. Mahsulotga bog'lanmagan
                   xarajatlar (nonvoylar ish haqi, reviziya, Xarajatlar, Harajatlar) savdo ulushiga
                   qarab taqsimlangan: <b>{pct(data.allocation.share)}</b> — bu taxminiy taqsimot.
+                  {(data.allocation.direct_sales ?? 0) > 0 &&
+                    ` Buyurtmasiz sotuv (${fm(data.allocation.direct_sales)}) mahsulotga bog'lanmagan — u faqat «Barcha mahsulotlar»da.`}
                 </p>
               )}
             </>
@@ -1276,7 +1279,14 @@ function PnlDetailModal({
 function SalesDetail({ sales }: { sales: any }) {
   const rows = (sales.items ?? []).map((i: { date: string; amount: number }) => [fmtDMY(i.date), <Money v={i.amount} />]);
   return (
-    <DetailTable head={["Sana", "Summa"]} rows={rows} foot={["Jami", <Money v={sales.total} />]} empty="Savdo yo'q" />
+    <div className="space-y-1">
+      <DetailTable head={["Sana", "Summa"]} rows={rows} foot={["Jami", <Money v={sales.total} />]} empty="Savdo yo'q" />
+      {(sales.direct ?? 0) > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Shundan buyurtmasiz sotuv (kassadagi belgilangan kirim): {fm(sales.direct)}
+        </p>
+      )}
+    </div>
   );
 }
 

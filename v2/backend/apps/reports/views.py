@@ -552,11 +552,28 @@ def _compute_product_cos(product, price_map: dict, labour_map: dict | None = Non
 
 # ─────────────────── Daily P&L builder ───────────────────
 
+def _direct_sales_by_date(start, end, tz) -> dict:
+    """{date: UZS} — kirim booked as "Buyurtmasiz sotuv": goods sold for cash
+    with no order in the system. The money is the sale, so it joins Savdo on the
+    day it was received (USD restated at its rate). Ordinary kirim never does —
+    it pays for orders already counted in Savdo."""
+    return {
+        r["d"]: float(r["t"] or 0)
+        for r in Payment.objects
+        .filter(payment_type="direct_sale",
+                received_at__date__gte=start, received_at__date__lte=end)
+        .annotate(d=TruncDate("received_at", tzinfo=tz))
+        .values("d")
+        .annotate(t=Sum(uzs_amount_expr()))
+    }
+
+
 def _collect_pnl_data(start, end, tz):
     """Accrual-matched P&L inputs for pnl_daily and gross_overall.
 
     Revenue = net delivered value (delivered − returned) at the locked unit
-        price, bucketed by order date. Cancelled orders excluded.
+        price, bucketed by order date, plus direct sales (buyurtmasiz sotuv
+        kirim) on the day received. Cancelled orders excluded.
     Cost of sales = MATERIAL recipe cost of those delivered units, ingredients
         valued at the Ombor manual price (avg_cost_uzs). This matches revenue on
         an accrual basis (cost of what was actually sold), unlike the old
@@ -595,6 +612,8 @@ def _collect_pnl_data(start, end, tz):
             continue
         d = item["order__order_date"]
         sales_by_date[d] = sales_by_date.get(d, 0.0) + float(item["unit_price"]) * net
+    for d, amt in _direct_sales_by_date(start, end, tz).items():
+        sales_by_date[d] = sales_by_date.get(d, 0.0) + amt
 
     # Tan narxi (material component) = meshoks PRODUCED that day × per-meshok cost.
     cos_by_date: dict = {}
@@ -1086,7 +1105,10 @@ class GrossDailyView(APIView):
         # material/communal/other cost) PLUS today's nonvoy (production) wages PLUS
         # today's reviziya variance.
         cos_display = production_material_total + prod_sal_total + rev_total
-        gp = grand_total_sales - cos_display
+        # Savdo = today's deliveries (the cross-tab) + today's buyurtmasiz sotuv.
+        direct = _direct_sales_by_date(date, date, get_current_timezone()).get(date, 0.0)
+        sales = grand_total_sales + direct
+        gp = sales - cos_display
         op = gp - exp_total
         net = op - draw_total
 
@@ -1099,7 +1121,8 @@ class GrossDailyView(APIView):
             "production": production,
             "production_cos_total": production_cos_total,
             "pnl": {
-                "sales": grand_total_sales,
+                "sales": sales,
+                "direct_sales": direct,
                 "cos": cos_display,
                 "cos_materials": production_material_total,
                 "production_salary": prod_sal_total,
@@ -1177,6 +1200,13 @@ class PnlDetailView(APIView):
                 sales_by_day[d] = sales_by_day.get(d, 0.0) + amt
             sales_by_pd[(pid, d)] = sales_by_pd.get((pid, d), 0.0) + amt
             prod_had_sales.add(pid)
+        # Buyurtmasiz sotuv joins Savdo per day; it names no product, so a
+        # product view leaves it out (and says how much it left out).
+        direct_by_day = _direct_sales_by_date(start, end, get_current_timezone())
+        total_direct = sum(direct_by_day.values())
+        if not product:
+            for d, amt in direct_by_day.items():
+                sales_by_day[d] = sales_by_day.get(d, 0.0) + amt
         sales_items = [
             {"date": d.isoformat(), "amount": sales_by_day[d]}
             for d in sorted(sales_by_day)
@@ -1325,7 +1355,7 @@ class PnlDetailView(APIView):
         if product:
             share = total_sales / all_sales if all_sales else 0.0
             allocation = {
-                "share": share, "sales_all": all_sales,
+                "share": share, "sales_all": all_sales, "direct_sales": total_direct,
                 "labour": total_prod_sal, "revision": total_revision,
                 "expenses": total_exp, "draw": total_draw,
             }
@@ -1346,6 +1376,7 @@ class PnlDetailView(APIView):
             "products": products,
             # products/rows stay for bundles that still filter Savdo themselves.
             "sales": {"total": total_sales, "items": sales_items,
+                      "direct": 0.0 if product else total_direct,
                       "products": sales_products, "rows": sales_rows},
             "cos": {
                 "total": tan,

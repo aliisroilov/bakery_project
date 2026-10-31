@@ -13,6 +13,8 @@ Models here:
 - GeneralExpense       — non-inventory purchases (utilities, rent, etc.)
 - CashHandover         — driver handing cash to office — feature #25
 """
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -114,6 +116,10 @@ class PaymentType(models.TextChoices):
     COLLECTION = "collection", "Kirim (delivery payment)"
     LOAN_REPAYMENT = "loan_repayment", "Qarz to'lovi"
     OTHER = "other", "Boshqa"
+    # Goods sold for cash with no order in the system (e.g. Baranki sold off the
+    # books): the money IS the sale. It counts in Savdo and never touches the
+    # shop's debt — there was no debt, since no order charged one.
+    DIRECT_SALE = "direct_sale", "Buyurtmasiz sotuv"
 
 
 class Payment(TimestampedModel):
@@ -199,7 +205,10 @@ class Payment(TimestampedModel):
         Returns ("uzs"|"usd", amount). A USD payment with a rate settles UZS debt
         at that rate (shops are invoiced in UZS); without a rate it falls back to
         settling USD debt, which is how pre-`exchange_rate` rows were booked.
+        A direct sale settles nothing (no order ever charged the shop).
         """
+        if self.payment_type == PaymentType.DIRECT_SALE:
+            return "uzs", Decimal("0")
         delta = self.closes_loan_by()
         if self.currency == Currency.USD:
             if self.exchange_rate and self.exchange_rate > 0:

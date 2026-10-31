@@ -12,6 +12,7 @@ from .models import (
     KassaTransaction,
     KassaTransfer,
     Payment,
+    PaymentType,
 )
 
 
@@ -75,6 +76,14 @@ class PaymentSerializer(UsdRateMixin, serializers.ModelSerializer):
         # Shops are invoiced in UZS, so a USD kirim needs a rate to settle their
         # debt — UsdRateMixin fills in the standard rate when none was sent.
         read_only_fields = ["created_at"]
+
+    def validate(self, data):
+        data = super().validate(data)
+        ptype = data.get("payment_type", getattr(self.instance, "payment_type", None))
+        # The cash is the whole sale: there is no shop debt for a skidka to cut.
+        if ptype == PaymentType.DIRECT_SALE and (data.get("discount") or 0) > 0:
+            raise serializers.ValidationError("Buyurtmasiz sotuvda skidka bo'lmaydi.")
+        return data
 
 
 class ExpenseCategorySerializer(serializers.ModelSerializer):
