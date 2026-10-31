@@ -552,6 +552,191 @@ def _compute_product_cos(product, price_map: dict, labour_map: dict | None = Non
 
 # ─────────────────── Daily P&L builder ───────────────────
 
+def _rate_timelines(user_ids) -> dict:
+    """{user_id: [(effective_from, rate, rate_type, week_start_day, currency), …]}
+
+    The salary app's effective-dated rate history (salary.utils._rate_timeline)
+    loaded for many users in two queries, carrying the currency so a USD rate is
+    restated in UZS. Only users with a SalaryRate get one — like the salary app,
+    which earns nothing without it; users with no period rows fall back to their
+    current rate as a single epoch-dated period.
+    """
+    from apps.salary.models import SalaryRate, SalaryRatePeriod
+    from apps.salary.utils import EPOCH
+
+    periods: dict = {}
+    for p in SalaryRatePeriod.objects.filter(user_id__in=user_ids).order_by("effective_from", "id"):
+        periods.setdefault(p.user_id, []).append(
+            (p.effective_from, float(p.rate or 0), p.rate_type, p.week_start_day, p.currency)
+        )
+    return {
+        r.user_id: periods.get(r.user_id)
+        or [(EPOCH, float(r.rate or 0), r.rate_type, r.week_start_day, r.currency)]
+        for r in SalaryRate.objects.filter(user_id__in=user_ids)
+    }
+
+
+def _nonvoy_wages(start, end, tz) -> list:
+    """Nonvoy (baker) wages EARNED in [start, end] — the labour part of Tan narxi.
+
+    Accrual: pay lands on the day the work was done, not on payday. (Counting
+    payouts dropped a whole week of wages on each Thursday, and a month with
+    five Thursdays carried five weeks of pay.) Mirrors the salary app's earned
+    calculation (salary.utils), so it ties out with the Oylik page:
+      - production rates (per_meshok / per_unit / per_product): each run credits
+        its baker, else every member of its group, else every baker ticked on
+        it — the full quantity to each — at the rate in effect on the run's day;
+      - time rates (per_week / fixed_monthly): accrue per calendar day (rate ÷ 7,
+        rate ÷ days in the month) from the hire date, up to today;
+      - bonuses add on their payment date — they are paid on top of the rate,
+        and are the whole wage of a worker with no rate set up;
+      - deductions subtract on their date.
+    Salary and advance payouts are NOT counted: they settle these earnings.
+    A worker archived before a day earns nothing from it.
+
+    Returns one dict per credited run, accrued day, bonus and deduction:
+    {date, user, kind, product_id, product, rate, qop, units, amount (UZS)};
+    only production rows carry a product. Bonus and deduction rows add note +
+    the payout's currency fields for display.
+    """
+    import calendar
+
+    from django.contrib.auth import get_user_model
+
+    from apps.salary.models import RateType, SalaryPayment, UserProductRate
+    from apps.salary.utils import _rate_on
+    from apps.users.models import EmployeeGroup
+
+    bakers = {u.id: u for u in get_user_model().objects.filter(role="nonvoy")}
+    timelines = _rate_timelines(list(bakers))
+    product_rates = {
+        (r.user_id, r.product_id): float(r.rate_per_meshok_uzs or 0)
+        for r in UserProductRate.objects.filter(user_id__in=list(bakers))
+    }
+    names = dict(Product.objects.values_list("id", "name"))
+
+    def gone(uid, d):
+        u = bakers[uid]
+        return u.is_archived and (u.archived_at is None or timezone.localtime(u.archived_at).date() < d)
+
+    rows = []
+
+    # Production pay. Crew per run follows salary.utils._production_contributions:
+    # the run's baker, else its group's members, else its ad-hoc crew.
+    group_members = {
+        g.id: list(g.members.values_list("id", flat=True)) for g in EmployeeGroup.objects.all()
+    }
+    crews: dict = {}
+    for run_id, uid in (
+        Production.individuals.through.objects
+        .filter(production__occurred_at__date__gte=start, production__occurred_at__date__lte=end)
+        .values_list("production_id", "user_id")
+    ):
+        crews.setdefault(run_id, []).append(uid)
+    runs = (
+        Production.objects
+        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
+        .annotate(d=TruncDate("occurred_at", tzinfo=tz))
+        .values("id", "d", "product_id", "nonvoy_id", "group_id", "meshok_count", "unit_count")
+    )
+    for r in runs:
+        if r["nonvoy_id"]:
+            crew = [r["nonvoy_id"]]
+        elif r["group_id"]:
+            crew = group_members.get(r["group_id"], [])
+        else:
+            crew = crews.get(r["id"], [])
+        qop = float(r["meshok_count"] or 0)
+        units = float(r["unit_count"] or 0)
+        for uid in crew:
+            if uid not in timelines or gone(uid, r["d"]):
+                continue
+            _eff, rate, rt, _wsd, cur = _rate_on(timelines[uid], r["d"])
+            if rt == RateType.PER_MESHOK:
+                amount = qop * rate
+            elif rt == RateType.PER_UNIT:
+                amount = units * rate
+            elif rt == RateType.PER_PRODUCT:
+                rate = product_rates.get((uid, r["product_id"]), 0.0)
+                amount = qop * rate
+            else:
+                continue  # time rates accrue per day below
+            if amount:
+                rows.append({
+                    "date": r["d"], "user": bakers[uid].display_name, "kind": rt,
+                    "product_id": r["product_id"], "product": names.get(r["product_id"], "?"),
+                    "rate": rate, "qop": qop, "units": units, "amount": _uzs(amount, cur),
+                })
+
+    # Time-rate pay, accrued day by day — never past today.
+    d = start
+    while d <= min(end, timezone.localdate()):
+        month_days = calendar.monthrange(d.year, d.month)[1]
+        for uid, timeline in timelines.items():
+            if timezone.localtime(bakers[uid].date_joined).date() > d or gone(uid, d):
+                continue
+            _eff, rate, rt, _wsd, cur = _rate_on(timeline, d)
+            if rt == RateType.PER_WEEK:
+                amount = rate / 7
+            elif rt == RateType.FIXED_MONTHLY:
+                amount = rate / month_days
+            else:
+                continue
+            if amount:
+                rows.append({
+                    "date": d, "user": bakers[uid].display_name, "kind": rt,
+                    "product_id": None, "product": "", "rate": rate, "qop": 0.0, "units": 0.0,
+                    "amount": _uzs(amount, cur),
+                })
+        d += timedelta(days=1)
+
+    # Bonuses (+) and deductions (−), on the day they were booked.
+    for s in (
+        SalaryPayment.objects
+        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end,
+                user__role="nonvoy", kind__in=("bonus", "deduction"))
+        .select_related("user").order_by("occurred_at")
+    ):
+        sign = -1 if s.kind == "deduction" else 1
+        rows.append({
+            "date": timezone.localtime(s.occurred_at).date(), "user": s.user.display_name,
+            "kind": s.kind, "product_id": None, "product": "", "rate": 0.0, "qop": 0.0, "units": 0.0,
+            "amount": sign * _uzs(s.amount, s.currency, s.exchange_rate),
+            "note": s.note, "currency": s.currency,
+            "original_amount": sign * _dec(s.amount),
+            "exchange_rate": _rate_cell(s.currency, s.exchange_rate),
+        })
+    return rows
+
+
+def _staff_pay(start, end) -> list:
+    """Pay to everyone who is not a baker (driver, manager, accountant, …) —
+    counted in Tan narxi on the day it is handed over: salary, advance and
+    bonus are the cash that left. A deduction moves no cash, so it is skipped.
+    Same row shape as _nonvoy_wages (kind="staff", pay_kind = the payout kind).
+    """
+    return [
+        {
+            "date": timezone.localtime(s.occurred_at).date(), "user": s.user.display_name,
+            "kind": "staff", "pay_kind": s.get_kind_display(),
+            "product_id": None, "product": "", "rate": 0.0, "qop": 0.0, "units": 0.0,
+            "amount": _uzs(s.amount, s.currency, s.exchange_rate),
+            "note": s.note, "currency": s.currency, "original_amount": _dec(s.amount),
+            "exchange_rate": _rate_cell(s.currency, s.exchange_rate),
+        }
+        for s in SalaryPayment.objects
+        .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
+        .exclude(user__role="nonvoy").exclude(kind="deduction")
+        .select_related("user").order_by("occurred_at")
+    ]
+
+
+def _labour(start, end, tz) -> list:
+    """Every wage row that lands in Tan narxi: bakers as earned (on the day of
+    the work), everyone else as paid (on the day of the payout)."""
+    return _nonvoy_wages(start, end, tz) + _staff_pay(start, end)
+
+
 def _direct_sales_by_date(start, end, tz) -> dict:
     """{date: UZS} — kirim booked as "Buyurtmasiz sotuv": goods sold for cash
     with no order in the system. The money is the sale, so it joins Savdo on the
@@ -584,9 +769,9 @@ def _collect_pnl_data(start, end, tz):
         - exp:  operating costs → the Xarajatlar line, above Op. foyda.
         - draw: owner draws (Rizoxon, Bahodir) → the Harajatlar line, below
           Op. foyda. Op. foyda therefore reflects the business only.
-    Salary: only nonvoy (baker) wages enter the P&L, as prod_sal folded into Tan
-        narxi — they are direct production labour. Advances are excluded (a
-        prepayment, not a period expense) and deductions are subtracted.
+    Salary folds into Tan narxi as prod_sal (see _labour): bakers' wages as
+        EARNED on the day of the work, every other worker's pay as PAID on
+        the day of the payout.
     """
     # Material + communal + other cost PER MESHOK (qop) for every product — the
     # recipe cost of one batch at the manual Ombor price, plus the per-meshok
@@ -645,38 +830,12 @@ def _collect_pnl_data(start, end, tz):
         bucket = draw_by_date if r["category__below_op_profit"] else exp_by_date
         bucket[r["d"]] = bucket.get(r["d"], 0.0) + float(r["total"] or 0)
 
-    # NONVOY (baker) wages are DIRECT PRODUCTION labour, so they fold into Tan
-    # narxi (cost of goods). Advances are prepayments (excluded); deductions
-    # reduce the expense (subtracted). Other roles' wages are NOT a P&L line —
-    # the row below Op. foyda is Harajatlar (owner draws) instead.
-    #
-    # NOTE, two real limitations of this line — both verified against Jul/Aug/Sep
-    # 2026 data, neither is a rounding artefact:
-    #   1. It is CASH PAID in the period, not wages EARNED in it, while every
-    #      other P&L input is accrual. So a catch-up payout inflates that month's
-    #      Tan narxi. It is therefore NOT the same figure as the standalone Tan
-    #      narxi report, which prices labour at the standard per-qop rate from
-    #      _build_labour_map (Jul: 45.9M paid vs 42.9M standard; Aug: 37.7M vs
-    #      34.4M; 1-16 Sep: 14.6M vs 12.3M).
-    #   2. Only role="nonvoy" counts, so driver / manager / accountant pay
-    #      appears in NO P&L line at all (Jul 5.0M, Aug 2.4M).
-    sal_rows = (
-        SalaryPayment.objects
-        .filter(
-            occurred_at__date__gte=start, occurred_at__date__lte=end,
-            user__role="nonvoy",
-        )
-        .exclude(kind="advance")
-        .annotate(d=TruncDate("occurred_at", tzinfo=tz))
-        .values("d", "kind")
-        .annotate(total=Sum(uzs_amount_expr()))
-    )
-    prod_sal_by_date: dict = {}   # nonvoy → Tan narxi (cost of goods)
-    for r in sal_rows:
-        amt = float(r["total"] or 0)
-        if r["kind"] == "deduction":
-            amt = -amt
-        prod_sal_by_date[r["d"]] = prod_sal_by_date.get(r["d"], 0.0) + amt
+    # Wages fold into Tan narxi (cost of goods): bakers as EARNED, on the day
+    # of the work (see _nonvoy_wages); everyone else as PAID, on the day of the
+    # payout (see _staff_pay).
+    prod_sal_by_date: dict = {}
+    for w in _labour(start, end, tz):
+        prod_sal_by_date[w["date"]] = prod_sal_by_date.get(w["date"], 0.0) + w["amount"]
 
     # Reviziya (inventory recount) variance folds into Tan narxi — a NON-CASH
     # adjustment. +value = shortage (kamomad, adds to COGS); −value = surplus
@@ -1077,20 +1236,9 @@ class GrossDailyView(APIView):
             else:
                 exp_total += float(r["t"] or 0)
 
-        # Salary: only nonvoy (production) pay is a P&L line, folded into Tan
-        # narxi below. Advances excluded (prepayments); deductions subtracted.
-        prod_sal_total = 0.0
-        for r in (
-            SalaryPayment.objects
-            .filter(occurred_at__date=date, user__role="nonvoy")
-            .exclude(kind="advance")
-            .values("kind")
-            .annotate(t=Sum(uzs_amount_expr()))
-        ):
-            amt = float(r["t"] or 0)
-            if r["kind"] == "deduction":
-                amt = -amt
-            prod_sal_total += amt
+        # Wages, folded into Tan narxi below: bakers' pay earned today, other
+        # staff's pay handed over today.
+        prod_sal_total = sum(w["amount"] for w in _labour(date, date, get_current_timezone()))
 
         # Reviziya (inventory recount) variance for this day folds into Tan narxi
         # — a non-cash adjustment (+shortage / −surplus). Same avg-cost basis as
@@ -1295,35 +1443,61 @@ class PnlDetailView(APIView):
         total_exp = sum(i["amount"] for i in exp_items)
         total_draw = sum(i["amount"] for i in draw_items)
 
-        # Salary — only nonvoy (production) pay is a P&L line; it folds into Tan
-        # narxi (cost of goods), mirroring _collect_pnl_data so the modal
-        # reconciles with the tables. Advances excluded, deductions subtracted.
-        sal_qs = (
-            SalaryPayment.objects
-            .filter(
-                occurred_at__date__gte=start, occurred_at__date__lte=end,
-                user__role="nonvoy",
+        # Wages in Tan narxi — the same rows _collect_pnl_data sums, so the
+        # modal reconciles with the tables. Bakers' production pay is grouped
+        # per worker × product × rate and time pay per worker × rate (days
+        # accrued); bonuses, deductions and other staff's payouts stay one row
+        # per payment. One product: only its own production pay is direct, the
+        # rest is shared (allocated by Savdo share below).
+        earned: dict = {}
+        payouts = []
+        shared_labour = 0.0
+        for w in _labour(start, end, get_current_timezone()):
+            if product and w["product_id"] != product:
+                if w["product_id"] is None:
+                    shared_labour += w["amount"]
+                continue
+            if w["kind"] in ("bonus", "deduction", "staff"):
+                label = {"bonus": "Bonus", "deduction": "Ushlab qolish"}.get(w["kind"]) or w["pay_kind"]
+                payouts.append({
+                    "date": w["date"].isoformat(),
+                    "user": w["user"],
+                    "kind": f"{label} — {w['note']}" if w["note"] else label,
+                    "amount": w["amount"],
+                    "currency": w["currency"],
+                    "original_amount": w["original_amount"],
+                    "exchange_rate": w["exchange_rate"],
+                })
+                continue
+            # per_meshok and per_product both pay per qop — one row per rate.
+            kind = "qop" if w["kind"] in ("per_meshok", "per_product") else w["kind"]
+            acc = earned.setdefault(
+                (w["user"], kind, w["product"], w["rate"]),
+                {"qop": 0.0, "units": 0.0, "days": 0, "amount": 0.0},
             )
-            .exclude(kind="advance").select_related("user").order_by("-occurred_at")
-        )
+            acc["qop"] += w["qop"]
+            acc["units"] += w["units"]
+            acc["days"] += 1
+            acc["amount"] += w["amount"]
+
+        def _n(v):
+            return f"{v:,.2f}".rstrip("0").rstrip(".").replace(",", " ")
+
         prod_sal_items = []
-        total_prod_sal = 0.0
-        for s in sal_qs:
-            amt = _uzs(s.amount, s.currency, s.exchange_rate)
-            original = _dec(s.amount)
-            if s.kind == "deduction":
-                amt = -amt
-                original = -original
-            total_prod_sal += amt
-            prod_sal_items.append({
-                "date": timezone.localtime(s.occurred_at).strftime("%Y-%m-%d"),
-                "user": s.user.display_name,
-                "kind": s.get_kind_display(),
-                "amount": amt,
-                "currency": s.currency,
-                "original_amount": original,
-                "exchange_rate": _rate_cell(s.currency, s.exchange_rate),
-            })
+        for (user, kind, prod_name, rate), acc in earned.items():
+            if kind == "per_unit":
+                label = f"{prod_name}: {_n(acc['units'])} dona × {_n(rate)}"
+            elif kind == "per_week":
+                label = f"Haftalik: {acc['days']} kun × {_n(rate)}/hafta"
+            elif kind == "fixed_monthly":
+                label = f"Oylik: {acc['days']} kun × {_n(rate)}/oy"
+            else:
+                label = f"{prod_name}: {_n(acc['qop'])} qop × {_n(rate)}"
+            prod_sal_items.append({"date": None, "user": user, "kind": label,
+                                   "amount": acc["amount"], "currency": "UZS"})
+        prod_sal_items.sort(key=lambda i: (i["user"], -i["amount"]))
+        prod_sal_items += payouts
+        total_prod_sal = sum(i["amount"] for i in prod_sal_items)
 
         # Reviziya (inventory recount) variance — a non-cash adjustment that folds
         # into Tan narxi. Each row is an ingredient recount: +value = shortage
@@ -1346,20 +1520,27 @@ class PnlDetailView(APIView):
         ]
         total_revision = sum(i["amount"] for i in revision_items)
 
-        # One product: costs that belong to no single product — nonvoy pay
-        # (counted when paid, not per run), the ingredient recount, Xarajatlar,
-        # Harajatlar — are allocated by the product's share of Savdo. An
-        # estimate (the UI says so), but every waterfall row narrows to the
-        # product and the products add back up to the whole-business total.
+        # One product: costs that belong to no single product — wages not tied
+        # to its runs (time rates, bonuses, deductions, other staff), the
+        # ingredient recount, Xarajatlar, Harajatlar — are allocated by the
+        # product's share of Savdo. An estimate (the UI says so), but every
+        # waterfall row narrows to the product and the products add back up to
+        # the whole-business total.
         allocation = None
         if product:
             share = total_sales / all_sales if all_sales else 0.0
             allocation = {
                 "share": share, "sales_all": all_sales, "direct_sales": total_direct,
-                "labour": total_prod_sal, "revision": total_revision,
+                "labour": shared_labour, "revision": total_revision,
                 "expenses": total_exp, "draw": total_draw,
             }
-            total_prod_sal, prod_sal_items = share * total_prod_sal, []
+            if shared_labour:
+                prod_sal_items.append({
+                    "date": None, "user": "Umumiy (savdo ulushi)",
+                    "kind": f"Mahsulotga bog'lanmagan ish haqi: {_n(shared_labour)} × {share * 100:.1f}%",
+                    "amount": share * shared_labour, "currency": "UZS",
+                })
+                total_prod_sal += share * shared_labour
             total_revision, revision_items = share * total_revision, []
             total_exp *= share   # items stay whole: the drill-down lists them at 100%
             total_draw *= share

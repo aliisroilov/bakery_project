@@ -947,7 +947,7 @@ function GrossDailyTab() {
 
           <p className="text-xs text-muted-foreground">
             {pnl.direct_sales > 0 && `Savdoga buyurtmasiz sotuv ham qo'shilgan: ${formatMoney(String(Math.round(pnl.direct_sales)), "UZS")} · `}
-            Tan narxi = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + nonvoy ish haqi · Harajatlar = Rizoxon, Bahodir (Op. foydadan keyin).
+            Tan narxi = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + ish haqi (nonvoylar — ishlab chiqarilganda, boshqa xodimlar — berilganda) · Harajatlar = Rizoxon, Bahodir (Op. foydadan keyin).
           </p>
 
           {/* Cross-tab: clients × products */}
@@ -1258,8 +1258,8 @@ function PnlDetailModal({
               </div>
               {data.allocation && (
                 <p className="text-xs text-muted-foreground">
-                  Savdo, xomashyo/kommunal/boshqa — faqat shu mahsulotniki. Mahsulotga bog'lanmagan
-                  xarajatlar (nonvoylar ish haqi, reviziya, Xarajatlar, Harajatlar) savdo ulushiga
+                  Savdo, xomashyo/kommunal/boshqa va o'z qoplari uchun nonvoy ish haqi — faqat shu mahsulotniki. Mahsulotga bog'lanmagan
+                  xarajatlar (o'z qoplariga bog'lanmagan ish haqi, reviziya, Xarajatlar, Harajatlar) savdo ulushiga
                   qarab taqsimlangan: <b>{pct(data.allocation.share)}</b> — bu taxminiy taqsimot.
                   {(data.allocation.direct_sales ?? 0) > 0 &&
                     ` Buyurtmasiz sotuv (${fm(data.allocation.direct_sales)}) mahsulotga bog'lanmagan — u faqat «Barcha mahsulotlar»da.`}
@@ -1360,22 +1360,22 @@ function CosDetail({ cos, allocation }: { cos: any; allocation?: any }) {
         />
       )}
       <div>
-        <div className="text-sm font-semibold mb-2">Ishlab chiqarish ish haqi (nonvoy) — {fm(cos.salary_total ?? 0)}</div>
-        {allocation ? (
-          <Formula text={`Nonvoy ish haqi = umumiy ${fm(allocation.labour)} × savdo ulushi ${pct(allocation.share)} = ${fm(cos.salary_total ?? 0)}`} />
-        ) : (
-          <GroupedDetail
-            items={cos.salary_items ?? []}
-            total={cos.salary_total ?? 0}
-            groupKey={(i: any) => i.user}
-            cols={[
-              { render: (i: any) => fmtDMY(i.date) },
-              { render: (i: any) => i.kind },
-              { render: (i: any) => <ItemAmount i={i} />, align: "right" },
-            ]}
-            empty="Ishlab chiqarish ish haqi yo'q"
-          />
-        )}
+        <div className="text-sm font-semibold mb-1">Ish haqi — {fm(cos.salary_total ?? 0)}</div>
+        <p className="text-xs text-muted-foreground mb-2">
+          Nonvoylar — ishlab chiqarilgan kuni (qop × stavka); boshqa xodimlar — pul berilgan kuni.
+        </p>
+        {/* For one product the rows are its own runs plus one "Umumiy (savdo ulushi)" row. */}
+        <GroupedDetail
+          items={cos.salary_items ?? []}
+          total={cos.salary_total ?? 0}
+          groupKey={(i: any) => i.user}
+          cols={[
+            { render: (i: any) => fmtDMY(i.date) },
+            { render: (i: any) => i.kind },
+            { render: (i: any) => <ItemAmount i={i} />, align: "right" },
+          ]}
+          empty="Ish haqi yo'q"
+        />
       </div>
       {allocation && allocation.revision !== 0 && (
         <Formula text={`Reviziya = umumiy ${fm(allocation.revision)} × savdo ulushi ${pct(allocation.share)} = ${fm(cos.revision_total ?? 0)}`} />
@@ -1755,7 +1755,7 @@ export function ReportsPage() {
 
           {(active === "pnl_daily" || active === "gross_overall") && (
             <p className="text-xs text-muted-foreground -mt-1">
-              <span className="font-medium text-foreground">Tan narxi</span> = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + nonvoy ish haqi ·{" "}
+              <span className="font-medium text-foreground">Tan narxi</span> = ishlab chiqarilgan qop bo'yicha (materiallar+kommunal+boshqa) + ish haqi (nonvoylar — ishlab chiqarilganda, boshqa xodimlar — berilganda) ·{" "}
               <span className="font-medium text-foreground">Xarajatlar</span> = operatsion xarajatlar ·{" "}
               <span className="font-medium text-foreground">Harajatlar</span> = Rizoxon, Bahodir (Op. foydadan keyin).{" "}
               {active === "gross_overall" && "Har bir raqamni bosib tarkibini oching."}
