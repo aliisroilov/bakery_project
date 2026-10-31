@@ -1115,12 +1115,18 @@ class GrossDailyView(APIView):
 
 # ────────────────── P&L detail (drill-down) endpoint ──────────────────
 class PnlDetailView(APIView):
-    """GET /reports/pnl-detail/?date_from=&date_to=
+    """GET /reports/pnl-detail/?date_from=&date_to=[&product=<id>]
 
     Line-item breakdown of every P&L metric for a date range — powers the Gross
     Overall drill-down (click a cell → see exactly what makes up that number).
     Uses the same accrual basis as the P&L: material COGS on net-delivered goods,
     salary excluding advances with deductions subtracted.
+
+    With ?product= the waterfall narrows to that product down to Yalpi foyda:
+    its sales and the material/kommunal/boshqa cost of its own qop. Costs that
+    belong to no single product — nonvoy pay (counted when paid), reviziya,
+    Xarajatlar, Harajatlar — are not split (no invented allocation); their
+    totals come back under "shared".
     """
     permission_classes = [IsAuthenticated]
 
@@ -1134,6 +1140,8 @@ class PnlDetailView(APIView):
             end = datetime.strptime(date_to, "%Y-%m-%d").date()
         except ValueError:
             return Response({"detail": "Invalid date. Use YYYY-MM-DD."}, status=400)
+        product = request.query_params.get("product")
+        product = int(product) if product and product.isdigit() else None
 
         price_map = _build_price_map()
         ing_per_meshok, communal_per_meshok, other_per_meshok, names = {}, {}, {}, {}
@@ -1163,7 +1171,8 @@ class PnlDetailView(APIView):
             d = it["order__order_date"]
             pid = it["product_id"]
             amt = float(it["unit_price"]) * net
-            sales_by_day[d] = sales_by_day.get(d, 0.0) + amt
+            if not product or pid == product:
+                sales_by_day[d] = sales_by_day.get(d, 0.0) + amt
             sales_by_pd[(pid, d)] = sales_by_pd.get((pid, d), 0.0) + amt
             prod_had_sales.add(pid)
         sales_items = [
@@ -1181,11 +1190,19 @@ class PnlDetailView(APIView):
 
         # Tan narxi by product = meshoks PRODUCED in the range × per-meshok cost.
         cos_by_p, communal_by_p, other_by_p, meshok_by_p = {}, {}, {}, {}
-        prod_rows = (
+        prod_rows = list(
             Production.objects
             .filter(occurred_at__date__gte=start, occurred_at__date__lte=end)
             .values("product_id").annotate(m=Sum("meshok_count"))
         )
+        # The product selector offers every product sold or baked in the range.
+        products = sorted(
+            ({"id": pid, "name": names.get(pid, "?")}
+             for pid in prod_had_sales | {r["product_id"] for r in prod_rows}),
+            key=lambda x: x["name"],
+        )
+        if product:
+            prod_rows = [r for r in prod_rows if r["product_id"] == product]
         for r in prod_rows:
             pid = r["product_id"]
             m = float(r["m"] or 0)
@@ -1297,6 +1314,14 @@ class PnlDetailView(APIView):
         ]
         total_revision = sum(i["amount"] for i in revision_items)
 
+        # One product: nonvoy pay (counted when paid, not per run) and an
+        # ingredient recount belong to no single product — set aside as shared.
+        shared = None
+        if product:
+            shared = {"labour": total_prod_sal, "revision": total_revision}
+            total_prod_sal, prod_sal_items = 0.0, []
+            total_revision, revision_items = 0.0, []
+
         # Tan narxi = materials + communal + other (boshqa) + production pay + reviziya.
         tan = total_cos + total_communal + total_other + total_prod_sal + total_revision
         gp = total_sales - tan
@@ -1305,6 +1330,9 @@ class PnlDetailView(APIView):
         return Response({
             "date_from": start.isoformat(),
             "date_to": end.isoformat(),
+            "product": product,
+            "products": products,
+            # products/rows stay for bundles that still filter Savdo themselves.
             "sales": {"total": total_sales, "items": sales_items,
                       "products": sales_products, "rows": sales_rows},
             "cos": {
@@ -1327,8 +1355,10 @@ class PnlDetailView(APIView):
             # `data.salary.total`.
             "salary": {"total": 0.0, "items": []},
             "gross_profit": gp,
-            "op_profit": op,
-            "net_profit": net,
+            # Op./Sof foyda need the shared costs, so they are whole-business only.
+            "op_profit": None if product else op,
+            "net_profit": None if product else net,
+            "shared": shared,
         })
 
 

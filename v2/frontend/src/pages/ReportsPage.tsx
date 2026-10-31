@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3, Download, Search, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown,
   Copy, ChevronDown, ChevronRight, TrendingUp, DollarSign, Package, Warehouse,
@@ -1164,9 +1164,15 @@ function PnlDetailModal({
   from: string; to: string; weekLabel: string;
   metricKey: string; metricLabel: string; onClose: () => void;
 }) {
+  // Product filter for the whole waterfall ("" = every product). The previous
+  // result stays on screen while the next one loads, so the selector doesn't
+  // vanish mid-switch.
+  const [product, setProduct] = useState<number | "">("");
   const { data, isFetching } = useQuery<any>({
-    queryKey: ["reports", "pnl-detail", from, to],
-    queryFn: async () => (await api.get(`/reports/pnl-detail/?date_from=${from}&date_to=${to}`)).data,
+    queryKey: ["reports", "pnl-detail", from, to, product],
+    queryFn: async () =>
+      (await api.get(`/reports/pnl-detail/?date_from=${from}&date_to=${to}${product ? `&product=${product}` : ""}`)).data,
+    placeholderData: keepPreviousData,
   });
 
   // Every waterfall row is expandable — click it to drill into its breakdown
@@ -1174,14 +1180,19 @@ function PnlDetailModal({
   const [open, setOpen] = useState<Record<string, boolean>>({ [metricKey]: true });
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
+  // One product: the waterfall stops at Yalpi foyda — costs below it (and the
+  // shared ones above it) belong to no single product and are not split.
+  const perProduct = !!data?.product;
   const waterfall = data ? [
     { key: "sales", label: "Savdo", val: data.sales.total, sum: false },
     { key: "cos", label: "− Tan narxi", val: -data.cos.total, sum: false },
     { key: "gross_profit", label: "= Yalpi foyda", val: data.gross_profit, sum: true },
-    { key: "expenses", label: "− Xarajatlar", val: -data.expenses.total, sum: false },
-    { key: "op_profit", label: "= Op. foyda", val: data.op_profit, sum: true },
-    { key: "draw", label: "− Harajatlar", val: -data.draw.total, sum: false },
-    { key: "net_profit", label: "= Sof foyda", val: data.net_profit, sum: true },
+    ...(perProduct ? [] : [
+      { key: "expenses", label: "− Xarajatlar", val: -data.expenses.total, sum: false },
+      { key: "op_profit", label: "= Op. foyda", val: data.op_profit, sum: true },
+      { key: "draw", label: "− Harajatlar", val: -data.draw.total, sum: false },
+      { key: "net_profit", label: "= Sof foyda", val: data.net_profit, sum: true },
+    ]),
   ] : [];
 
   return (
@@ -1205,8 +1216,20 @@ function PnlDetailModal({
 
           {data && (
             <>
+              {(data.products?.length ?? 0) > 0 && (
+                <select
+                  value={product}
+                  onChange={(e) => setProduct(e.target.value ? Number(e.target.value) : "")}
+                  className="w-full h-10 rounded-lg border bg-background px-3 text-sm"
+                >
+                  <option value="">Barcha mahsulotlar</option>
+                  {(data.products as { id: number; name: string }[]).map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
               <p className="text-xs text-muted-foreground">Har bir qatorni bosib tafsilotlarini oching.</p>
-              <div className="rounded-xl border overflow-hidden text-sm divide-y">
+              <div className={"rounded-xl border overflow-hidden text-sm divide-y " + (isFetching ? "opacity-60" : "")}>
                 {waterfall.map((r) => {
                   const isOpen = !!open[r.key];
                   return (
@@ -1234,6 +1257,16 @@ function PnlDetailModal({
                   );
                 })}
               </div>
+              {perProduct && data.shared && (
+                <p className="text-xs text-muted-foreground">
+                  Faqat shu mahsulotning savdosi va o'z qoplari uchun xomashyo/kommunal/boshqa tan
+                  narxi. Mahsulotga bo'linmaydigan umumiy summalar bu yerga kirmaydi: nonvoylar ish
+                  haqi {fm(data.shared.labour)}
+                  {data.shared.revision ? `, reviziya ${fm(data.shared.revision)}` : ""}, Xarajatlar{" "}
+                  {fm(data.expenses.total)}, Harajatlar {fm(data.draw.total)}. Op. va Sof foyda —
+                  «Barcha mahsulotlar»da.
+                </p>
+              )}
             </>
           )}
         </div>
@@ -1244,38 +1277,11 @@ function PnlDetailModal({
 
 // Inline breakdown for one waterfall row. Component rows show their line items;
 // derived rows (gross/op/net) show the formula that produced them.
-// Savdo drill-down — sales by day, filterable by product (#1).
+// Savdo drill-down — sales by day, for the product chosen at the top of the modal.
 function SalesDetail({ sales }: { sales: any }) {
-  const [productId, setProductId] = useState<number | "">("");
-  const products = (sales.products ?? []) as { id: number; name: string }[];
-  let rows: any[][];
-  let total: number;
-  if (productId === "") {
-    rows = (sales.items ?? []).map((i: any) => [fmtDMY(i.date), <Money v={i.amount} />]);
-    total = sales.total;
-  } else {
-    const byDate: Record<string, number> = {};
-    ((sales.rows ?? []) as any[])
-      .filter((r) => r.product_id === productId)
-      .forEach((r) => { byDate[r.date] = (byDate[r.date] ?? 0) + r.amount; });
-    const sorted = Object.entries(byDate).sort((a, b) => a[0].localeCompare(b[0]));
-    total = sorted.reduce((s, [, v]) => s + v, 0);
-    rows = sorted.map(([d, v]) => [fmtDMY(d), <Money v={v} />]);
-  }
+  const rows = (sales.items ?? []).map((i: { date: string; amount: number }) => [fmtDMY(i.date), <Money v={i.amount} />]);
   return (
-    <div className="space-y-2">
-      {products.length > 0 && (
-        <select
-          value={productId}
-          onChange={(e) => setProductId(e.target.value ? Number(e.target.value) : "")}
-          className="w-full h-9 rounded-lg border bg-background px-2 text-sm"
-        >
-          <option value="">Barcha mahsulotlar</option>
-          {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-      )}
-      <DetailTable head={["Sana", "Summa"]} rows={rows} foot={["Jami", <Money v={total} />]} empty="Savdo yo'q" />
-    </div>
+    <DetailTable head={["Sana", "Summa"]} rows={rows} foot={["Jami", <Money v={sales.total} />]} empty="Savdo yo'q" />
   );
 }
 
