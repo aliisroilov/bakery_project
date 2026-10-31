@@ -1122,11 +1122,11 @@ class PnlDetailView(APIView):
     Uses the same accrual basis as the P&L: material COGS on net-delivered goods,
     salary excluding advances with deductions subtracted.
 
-    With ?product= the waterfall narrows to that product down to Yalpi foyda:
-    its sales and the material/kommunal/boshqa cost of its own qop. Costs that
-    belong to no single product — nonvoy pay (counted when paid), reviziya,
-    Xarajatlar, Harajatlar — are not split (no invented allocation); their
-    totals come back under "shared".
+    With ?product= every row narrows to that product: its sales and the
+    material/kommunal/boshqa cost of its own qop, plus its Savdo share of the
+    costs that belong to no single product — nonvoy pay (counted when paid),
+    reviziya, Xarajatlar, Harajatlar. "allocation" carries the share and the
+    whole-business totals it was applied to.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1164,6 +1164,7 @@ class PnlDetailView(APIView):
         sales_by_day: dict = {}
         sales_by_pd: dict = {}   # (product_id, date) → amount
         prod_had_sales = set()
+        all_sales = 0.0          # every product — the base of a product's share
         for it in items:
             net = max(0, it["delivered_quantity"] - it["returned_quantity"])
             if net == 0:
@@ -1171,6 +1172,7 @@ class PnlDetailView(APIView):
             d = it["order__order_date"]
             pid = it["product_id"]
             amt = float(it["unit_price"]) * net
+            all_sales += amt
             if not product or pid == product:
                 sales_by_day[d] = sales_by_day.get(d, 0.0) + amt
             sales_by_pd[(pid, d)] = sales_by_pd.get((pid, d), 0.0) + amt
@@ -1314,13 +1316,23 @@ class PnlDetailView(APIView):
         ]
         total_revision = sum(i["amount"] for i in revision_items)
 
-        # One product: nonvoy pay (counted when paid, not per run) and an
-        # ingredient recount belong to no single product — set aside as shared.
-        shared = None
+        # One product: costs that belong to no single product — nonvoy pay
+        # (counted when paid, not per run), the ingredient recount, Xarajatlar,
+        # Harajatlar — are allocated by the product's share of Savdo. An
+        # estimate (the UI says so), but every waterfall row narrows to the
+        # product and the products add back up to the whole-business total.
+        allocation = None
         if product:
-            shared = {"labour": total_prod_sal, "revision": total_revision}
-            total_prod_sal, prod_sal_items = 0.0, []
-            total_revision, revision_items = 0.0, []
+            share = total_sales / all_sales if all_sales else 0.0
+            allocation = {
+                "share": share, "sales_all": all_sales,
+                "labour": total_prod_sal, "revision": total_revision,
+                "expenses": total_exp, "draw": total_draw,
+            }
+            total_prod_sal, prod_sal_items = share * total_prod_sal, []
+            total_revision, revision_items = share * total_revision, []
+            total_exp *= share   # items stay whole: the drill-down lists them at 100%
+            total_draw *= share
 
         # Tan narxi = materials + communal + other (boshqa) + production pay + reviziya.
         tan = total_cos + total_communal + total_other + total_prod_sal + total_revision
@@ -1355,10 +1367,9 @@ class PnlDetailView(APIView):
             # `data.salary.total`.
             "salary": {"total": 0.0, "items": []},
             "gross_profit": gp,
-            # Op./Sof foyda need the shared costs, so they are whole-business only.
-            "op_profit": None if product else op,
-            "net_profit": None if product else net,
-            "shared": shared,
+            "op_profit": op,
+            "net_profit": net,
+            "allocation": allocation,
         })
 
 

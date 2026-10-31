@@ -1157,6 +1157,7 @@ function ItemAmount({ i }: { i: any }) {
 }
 
 const fm = (v: number) => formatMoney(String(Math.round(v)), "UZS");
+const pct = (share: number) => `${(share * 100).toFixed(1)}%`;
 
 function PnlDetailModal({
   from, to, weekLabel, metricKey, metricLabel, onClose,
@@ -1180,19 +1181,16 @@ function PnlDetailModal({
   const [open, setOpen] = useState<Record<string, boolean>>({ [metricKey]: true });
   const toggle = (k: string) => setOpen((o) => ({ ...o, [k]: !o[k] }));
 
-  // One product: the waterfall stops at Yalpi foyda — costs below it (and the
-  // shared ones above it) belong to no single product and are not split.
-  const perProduct = !!data?.product;
+  // One product: every row narrows to it — shared costs come in at its Savdo
+  // share (data.allocation), so the products add back up to the total.
   const waterfall = data ? [
     { key: "sales", label: "Savdo", val: data.sales.total, sum: false },
     { key: "cos", label: "− Tan narxi", val: -data.cos.total, sum: false },
     { key: "gross_profit", label: "= Yalpi foyda", val: data.gross_profit, sum: true },
-    ...(perProduct ? [] : [
-      { key: "expenses", label: "− Xarajatlar", val: -data.expenses.total, sum: false },
-      { key: "op_profit", label: "= Op. foyda", val: data.op_profit, sum: true },
-      { key: "draw", label: "− Harajatlar", val: -data.draw.total, sum: false },
-      { key: "net_profit", label: "= Sof foyda", val: data.net_profit, sum: true },
-    ]),
+    { key: "expenses", label: "− Xarajatlar", val: -data.expenses.total, sum: false },
+    { key: "op_profit", label: "= Op. foyda", val: data.op_profit, sum: true },
+    { key: "draw", label: "− Harajatlar", val: -data.draw.total, sum: false },
+    { key: "net_profit", label: "= Sof foyda", val: data.net_profit, sum: true },
   ] : [];
 
   return (
@@ -1257,14 +1255,11 @@ function PnlDetailModal({
                   );
                 })}
               </div>
-              {perProduct && data.shared && (
+              {data.allocation && (
                 <p className="text-xs text-muted-foreground">
-                  Faqat shu mahsulotning savdosi va o'z qoplari uchun xomashyo/kommunal/boshqa tan
-                  narxi. Mahsulotga bo'linmaydigan umumiy summalar bu yerga kirmaydi: nonvoylar ish
-                  haqi {fm(data.shared.labour)}
-                  {data.shared.revision ? `, reviziya ${fm(data.shared.revision)}` : ""}, Xarajatlar{" "}
-                  {fm(data.expenses.total)}, Harajatlar {fm(data.draw.total)}. Op. va Sof foyda —
-                  «Barcha mahsulotlar»da.
+                  Savdo, xomashyo/kommunal/boshqa — faqat shu mahsulotniki. Mahsulotga bog'lanmagan
+                  xarajatlar (nonvoylar ish haqi, reviziya, Xarajatlar, Harajatlar) savdo ulushiga
+                  qarab taqsimlangan: <b>{pct(data.allocation.share)}</b> — bu taxminiy taqsimot.
                 </p>
               )}
             </>
@@ -1287,35 +1282,32 @@ function SalesDetail({ sales }: { sales: any }) {
 
 function MetricDetail({ k, data }: { k: string; data: any }) {
   if (k === "sales") return <SalesDetail sales={data.sales} />;
-  if (k === "cos") return <CosDetail cos={data.cos} />;
-  if (k === "expenses") {
-    return (
+  if (k === "cos") return <CosDetail cos={data.cos} allocation={data.allocation} />;
+  if (k === "expenses" || k === "draw") {
+    // For one product the line is its Savdo share of the whole-business total;
+    // the rows below stay at 100% so every sum can be traced.
+    const a = data.allocation;
+    const label = k === "expenses" ? "Xarajatlar" : "Harajatlar";
+    const list = (
       <GroupedDetail
-        items={data.expenses.items}
-        total={data.expenses.total}
+        items={data[k].items}
+        total={a ? a[k] : data[k].total}
         groupKey={(i: any) => i.category}
         cols={[
           { render: (i: any) => fmtDMY(i.date) },
           { render: (i: any) => i.title },
           { render: (i: any) => <ItemAmount i={i} />, align: "right" },
         ]}
-        empty="Xarajat yo'q"
+        empty={k === "expenses" ? "Xarajat yo'q" : "Harajat yo'q"}
       />
     );
-  }
-  if (k === "draw") {
+    if (!a) return list;
     return (
-      <GroupedDetail
-        items={data.draw.items}
-        total={data.draw.total}
-        groupKey={(i: any) => i.category}
-        cols={[
-          { render: (i: any) => fmtDMY(i.date) },
-          { render: (i: any) => i.title },
-          { render: (i: any) => <ItemAmount i={i} />, align: "right" },
-        ]}
-        empty="Harajat yo'q"
-      />
+      <div className="space-y-2">
+        <Formula text={`${label} = umumiy ${fm(a[k])} × savdo ulushi ${pct(a.share)} = ${fm(data[k].total)}`} />
+        <div className="text-xs text-muted-foreground">Umumiy ro'yxat (100%):</div>
+        {list}
+      </div>
     );
   }
   if (k === "gross_profit")
@@ -1328,7 +1320,8 @@ function MetricDetail({ k, data }: { k: string; data: any }) {
 }
 
 // Tan narxi = materials (recipe cost of goods sold) + nonvoy production wages.
-function CosDetail({ cos }: { cos: any }) {
+// For one product, the wages and reviziya are its Savdo share (allocation).
+function CosDetail({ cos, allocation }: { cos: any; allocation?: any }) {
   return (
     <div className="space-y-3">
       <DetailTable
@@ -1358,18 +1351,25 @@ function CosDetail({ cos }: { cos: any }) {
       )}
       <div>
         <div className="text-sm font-semibold mb-2">Ishlab chiqarish ish haqi (nonvoy) — {fm(cos.salary_total ?? 0)}</div>
-        <GroupedDetail
-          items={cos.salary_items ?? []}
-          total={cos.salary_total ?? 0}
-          groupKey={(i: any) => i.user}
-          cols={[
-            { render: (i: any) => fmtDMY(i.date) },
-            { render: (i: any) => i.kind },
-            { render: (i: any) => <ItemAmount i={i} />, align: "right" },
-          ]}
-          empty="Ishlab chiqarish ish haqi yo'q"
-        />
+        {allocation ? (
+          <Formula text={`Nonvoy ish haqi = umumiy ${fm(allocation.labour)} × savdo ulushi ${pct(allocation.share)} = ${fm(cos.salary_total ?? 0)}`} />
+        ) : (
+          <GroupedDetail
+            items={cos.salary_items ?? []}
+            total={cos.salary_total ?? 0}
+            groupKey={(i: any) => i.user}
+            cols={[
+              { render: (i: any) => fmtDMY(i.date) },
+              { render: (i: any) => i.kind },
+              { render: (i: any) => <ItemAmount i={i} />, align: "right" },
+            ]}
+            empty="Ishlab chiqarish ish haqi yo'q"
+          />
+        )}
       </div>
+      {allocation && allocation.revision !== 0 && (
+        <Formula text={`Reviziya = umumiy ${fm(allocation.revision)} × savdo ulushi ${pct(allocation.share)} = ${fm(cos.revision_total ?? 0)}`} />
+      )}
       {(cos.revision_items?.length ?? 0) > 0 && (
         <DetailTable
           title={`Reviziya (ombor farqi) — ${fm(cos.revision_total ?? 0)}`}
